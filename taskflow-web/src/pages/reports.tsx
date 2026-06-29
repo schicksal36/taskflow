@@ -19,6 +19,7 @@ import {
   type ReportFile,
   type UserListItem,
   attachReportFile,
+  cancelReport,
   confirmReport,
   createReport,
   deleteReport,
@@ -347,6 +348,14 @@ export default function ReportsPage() {
     );
   }
 
+  function canReviseSubmittedReport(item: Report) {
+    return item.status === "SUBMITTED" && !item.recipients?.some((recipient) => recipient.is_read);
+  }
+
+  function canEditSentReport(item: Report) {
+    return ["DRAFT", "RETURNED"].includes(item.status) || canReviseSubmittedReport(item);
+  }
+
   async function handleSubmitReport(id: number) {
     if (!accessToken) {
       return;
@@ -386,6 +395,19 @@ export default function ReportsPage() {
 
     try {
       await resubmitReport(accessToken, id);
+      await loadItems();
+    } catch (error) {
+      setMessage(describeApiError(error));
+    }
+  }
+
+  async function handleCancelReport(id: number) {
+    if (!accessToken) {
+      return;
+    }
+
+    try {
+      await cancelReport(accessToken, id);
       await loadItems();
     } catch (error) {
       setMessage(describeApiError(error));
@@ -602,7 +624,12 @@ export default function ReportsPage() {
                             재제출
                           </button>
                         )}
-                        {["DRAFT", "RETURNED"].includes(item.status) && (
+                        {canReviseSubmittedReport(item) && (
+                          <button className="ghost-button" onClick={() => handleCancelReport(item.id)} type="button">
+                            취소
+                          </button>
+                        )}
+                        {canEditSentReport(item) && (
                           <button className="ghost-button" onClick={() => startEdit(item)} type="button">
                             수정
                           </button>

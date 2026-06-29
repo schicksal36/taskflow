@@ -557,9 +557,14 @@ class ReportCancelView(ReportQuerysetMixin, APIView):
 
     def patch(self, request, pk):
         report = self.get_report(pk)
+        self.ensure_writer_action_allowed()
         self.ensure_writer(report)
         serializer = ReportCancelSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        if report.status != Report.ReportStatus.SUBMITTED:
+            raise ValidationError("제출 상태의 보고서만 취소할 수 있습니다.")
+        if report.recipient_records.filter(is_read=True).exists():
+            raise ValidationError("수신자가 읽은 보고서는 취소할 수 없습니다.")
         report.status = Report.ExpenseStatus.CANCELED if report.is_expense else Report.ReportStatus.CANCELED
         report.save(update_fields=["status"])
         return success_response(ReportDetailSerializer(report).data, "보고서를 취소했습니다.")

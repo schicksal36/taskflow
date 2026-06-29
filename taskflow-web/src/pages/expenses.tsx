@@ -10,6 +10,7 @@ import {
   type ReportInput,
   type UserListItem,
   bulkUpdateExpenseStatus,
+  cancelReport,
   createExpenseItem,
   createExpenseReceipt,
   createReport,
@@ -353,6 +354,20 @@ export default function ExpensesPage() {
     }
   }
 
+  async function handleCancelReport(id: number) {
+    if (!accessToken) {
+      return;
+    }
+
+    try {
+      await cancelReport(accessToken, id);
+      await loadReports(id);
+      await loadSummary();
+    } catch (error) {
+      setMessage(describeApiError(error));
+    }
+  }
+
   function handleSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSearchTerm(searchInput.trim());
@@ -438,6 +453,14 @@ export default function ExpensesPage() {
         ))}
       </div>
     );
+  }
+
+  function canReviseSubmittedReport(item: Report) {
+    return item.writer === user?.id && item.status === "SUBMITTED" && !item.recipients?.some((recipient) => recipient.is_read);
+  }
+
+  function canEditExpenseReport(item: Report) {
+    return item.writer === user?.id && (["DRAFT", "REJECTED"].includes(item.status) || canReviseSubmittedReport(item));
   }
 
   return (
@@ -773,9 +796,16 @@ export default function ExpensesPage() {
                         제출
                       </button>
                     )}
-                    <button className="ghost-button" onClick={() => startEditReport(report)} type="button">
-                      수정
-                    </button>
+                    {canReviseSubmittedReport(report) && (
+                      <button className="ghost-button" onClick={() => handleCancelReport(report.id)} type="button">
+                        취소
+                      </button>
+                    )}
+                    {canEditExpenseReport(report) && (
+                      <button className="ghost-button" onClick={() => startEditReport(report)} type="button">
+                        수정
+                      </button>
+                    )}
                     <button className="danger-button" onClick={() => handleDeleteReport(report.id)} type="button">
                       삭제
                     </button>

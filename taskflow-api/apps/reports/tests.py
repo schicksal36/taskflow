@@ -184,6 +184,40 @@ class ReportApiTests(APITestCase):
         )
         self.assertEqual(blocked_response.status_code, status.HTTP_400_BAD_REQUEST)
 
+    def test_submitted_report_can_be_canceled_until_recipient_reads(self):
+        self.client.force_authenticate(self.writer)
+        create_response = self.client.post(
+            "/api/reports/",
+            {
+                "recipient_ids": [self.approver.id],
+                "report_type": "WORK_REPORT",
+                "title": "미열람 취소 대상",
+                "content": "취소 전",
+                "report_date": timezone.localdate().isoformat(),
+            },
+            format="json",
+        )
+        self.assertEqual(create_response.status_code, status.HTTP_201_CREATED)
+        report = Report.objects.get(title="미열람 취소 대상")
+
+        submit_response = self.client.patch(f"/api/reports/{report.id}/submit/", {}, format="json")
+        self.assertEqual(submit_response.status_code, status.HTTP_200_OK)
+
+        cancel_response = self.client.patch(f"/api/reports/{report.id}/cancel/", {}, format="json")
+        self.assertEqual(cancel_response.status_code, status.HTTP_200_OK)
+        report.refresh_from_db()
+        self.assertEqual(report.status, Report.ReportStatus.CANCELED)
+
+        report.status = Report.ReportStatus.SUBMITTED
+        report.save(update_fields=["status"])
+        self.client.force_authenticate(self.approver)
+        detail_response = self.client.get(f"/api/reports/{report.id}/")
+        self.assertEqual(detail_response.status_code, status.HTTP_200_OK)
+
+        self.client.force_authenticate(self.writer)
+        blocked_response = self.client.patch(f"/api/reports/{report.id}/cancel/", {}, format="json")
+        self.assertEqual(blocked_response.status_code, status.HTTP_400_BAD_REQUEST)
+
     def test_expense_report_item_and_approve(self):
         self.client.force_authenticate(self.writer)
         report = Report.objects.create(

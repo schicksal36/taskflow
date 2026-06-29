@@ -1061,6 +1061,21 @@ export function submitReport(token: string, id: number) {
   });
 }
 
+export function cancelReport(token: string, id: number) {
+  /**
+   * 업무보고/경비보고 취소.
+   *
+   * API: PATCH /api/reports/{id}/cancel/
+   * 성공: 수신자가 읽기 전 제출 보고서를 CANCELED 상태로 변경
+   * 실패: 작성자가 아니거나 이미 수신자가 읽은 경우 ApiError 전달
+   */
+  return apiFetch<Report>(`/reports/${id}/cancel/`, {
+    method: "PATCH",
+    token,
+    body: {},
+  });
+}
+
 export function confirmReport(token: string, id: number) {
   /**
    * 업무보고 확인완료.

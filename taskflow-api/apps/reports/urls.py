@@ -1,0 +1,37 @@
+from django.urls import path
+
+from . import views
+
+urlpatterns = [
+    path("", views.ReportListCreateView.as_view(), name="report-list-create"),
+    path("created/me/", views.MyCreatedReportView.as_view(), name="my-created-reports"),
+    path("approval/me/", views.MyApprovalReportView.as_view(), name="my-approval-reports"),
+    path("daily/", views.WorkReportAliasListView.as_view(), name="daily-reports"),
+    path("work/", views.WorkReportListView.as_view(), name="work-reports"),
+    path("expenses/", views.ExpenseReportListView.as_view(), name="expense-reports"),
+    path("expenses/summary/", views.ExpenseSummaryView.as_view(), name="expense-summary"),
+    path("expenses/bulk-status/", views.ExpenseBulkStatusView.as_view(), name="expense-bulk-status"),
+    path("history/", views.ReportHistoryView.as_view(), name="report-history"),
+    path("summary/", views.ReportSummaryView.as_view(), name="report-summary"),
+    path("files/<int:file_id>/download/", views.ReportFileDownloadView.as_view(), name="report-file-download"),
+    path("files/<int:file_id>/", views.ReportFileDetailView.as_view(), name="report-file-detail"),
+    path("expenses/receipts/<int:receipt_id>/download/", views.ExpenseReceiptDownloadView.as_view(), name="expense-receipt-download"),
+    path("expenses/receipts/<int:receipt_id>/", views.ExpenseReceiptDetailView.as_view(), name="expense-receipt-detail"),
+    path("<int:pk>/", views.ReportDetailUpdateDeleteView.as_view(), name="report-detail"),
+    path("<int:pk>/submit/", views.ReportSubmitView.as_view(), name="report-submit"),
+    path("<int:pk>/confirm/", views.ReportConfirmView.as_view(), name="report-confirm"),
+    path("<int:pk>/return/", views.ReportReturnView.as_view(), name="report-return"),
+    path("<int:pk>/resubmit/", views.ReportResubmitView.as_view(), name="report-resubmit"),
+    path("<int:pk>/cancel/", views.ReportCancelView.as_view(), name="report-cancel"),
+    path("<int:pk>/expenses/review/", views.ExpenseReviewView.as_view(), name="expense-review"),
+    path("<int:pk>/expenses/approve/", views.ExpenseApproveView.as_view(), name="expense-approve"),
+    path("<int:pk>/expenses/reject/", views.ExpenseRejectView.as_view(), name="expense-reject"),
+    path("<int:pk>/expenses/items/", views.ExpenseItemListCreateView.as_view(), name="expense-items"),
+    path("expenses/items/<int:item_id>/", views.ExpenseItemDetailView.as_view(), name="expense-item-detail"),
+    path("expenses/items/<int:item_id>/receipts/", views.ExpenseReceiptListCreateView.as_view(), name="expense-receipts"),
+    path("<int:pk>/files/", views.ReportFileListCreateView.as_view(), name="report-files"),
+    path("<int:pk>/pdf/", views.ReportPdfDownloadView.as_view(), name="report-pdf-download"),
+    path("<int:pk>/expenses/excel/", views.ExpenseExcelDownloadView.as_view(), name="expense-excel-download"),
+    path("<int:pk>/pdf/generate/", views.ReportPdfGenerateView.as_view(), name="report-pdf-generate"),
+    path("<int:pk>/expenses/excel/generate/", views.ExpenseExcelGenerateView.as_view(), name="expense-excel-generate"),
+]

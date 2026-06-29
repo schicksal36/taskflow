@@ -1,0 +1,44 @@
+[project]
+name = "taskflow"
+version = "0.1.0"
+description = "TaskFlow 사내 업무요청 관리 시스템"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    # --- 웹 프레임워크 및 API 핵심 설정 ---
+    "django>=5.2",                       # Django 백엔드 핵심 프레임워크
+    "djangorestframework>=3.15",         # RESTful API 빌드를 위한 DRF Toolkit
+    "djangorestframework-simplejwt>=5.3", # JWT 기반 사용자 인증/토큰 관리
+    "django-cors-headers>=4.4",          # CORS(교차 출처 리소스 공유) 허용 설정
+    "python-dotenv>=1.0",                # .env 파일에서 환경 변수 로드
+    "django-environ>=0.11.0",            # Django 환경변수 설정 유틸리티 (추가)
+    "django-filter>=24.3",               # API 쿼리 스트링 조건 필터링 기능
+    "drf-spectacular>=0.27",             # Swagger/OpenAPI 3.0 API 문서 자동 생성
+    # --- 인증 및 회원가입 관련 (추가) ---
+    "dj-rest-auth>=7.2.0",               # DRF용 인증(로그인/로그아웃/비밀번호 재설정) API
+    "django-allauth>=65.18.0",           # 소셜/일반 회원가입 및 계정 관리 확장
+    # --- 데이터베이스 ---
+    "psycopg2-binary>=2.9",              # PostgreSQL 데이터베이스 연동 드라이버
+    # --- 파일 처리 및 데이터 분석/리포트 ---
+    "pillow>=10.4",                      # 이미지 파일 처리 및 썸네일 생성 등
+    "openpyxl>=3.1",                     # Excel(xlsx) 파일 읽기/쓰기 지원
+    "pandas>=2.2",                       # 대용량 데이터 분석, 통계 및 엑셀 데이터 가공
+    "reportlab>=4.2",                    # PDF 리포트/문서 생성 및 내보내기
+    # --- 파일 보안 및 검증 ---
+    #:"python-magic-bin>=0.4.14",          # Windows 환경용 파일 binary/MIME 타입 체크 (libmagic 바이너리 포함)
+    "python-magic>=0.4.27",              # 업로드된 파일의 실제 MIME 타입(확장자 위변조 방지) 검증
+    # --- 네트워크 / HTTP 요청 (추가) ---
+    "requests>=2.32.0",                  # 외부 API 호출을 위한 HTTP 요청 라이브러리 (certifi, urllib3 자동 포함됨)
+    # --- 비동기 작업 및 스케줄러 (Celery) ---
+    "celery>=5.4",                       # 백그라운드 비동기 작업(Task) 큐
+    "redis>=5.0",                        # Celery Broker 및 데이터 캐시용 Redis 클라이언트
+    "django-celery-beat>=2.7",           # Django Admin과 연동되는 주기적/예약 작업 스케줄러
+    # --- 실시간 통신 및 웹소켓 (Channels) ---
+    "channels>=4.1",                     # Django 웹소켓(WebSocket) 및 비동기 프로토콜 지원
+    "channels-redis>=4.2",               # Channels를 위한 Redis 채널 레이어(백엔드)
+    "daphne>=4.1",                       # WebSockets/ASGI 지원을 위한 Django 공식 HTTP/WebSocket 서버
+    # --- 유틸리티 (날짜 및 시간) ---
+    "python-dateutil>=2.9.0.post0",      # 복잡한 날짜/시간 파싱 및 상대적 시간 계산                       # 세계 시간대(Timezone) 데이터베이스 처리
+    "pytz>=2026.2",
+    "gunicorn>=26.0.0",
+]

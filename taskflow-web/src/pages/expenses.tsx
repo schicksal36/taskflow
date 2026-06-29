@@ -26,7 +26,7 @@ import {
   updateReport,
   uploadMediaFile,
 } from "@/lib/api";
-import { formatDate, formatMoney, todayString } from "@/lib/format";
+import { formatDate, formatDateTime, formatMoney, todayString } from "@/lib/format";
 import { expenseCategoryLabels, labelOf, paymentMethodLabels, reportStatusLabels } from "@/lib/labels";
 
 const emptyReportForm: ReportInput = {
@@ -406,6 +406,40 @@ export default function ExpensesPage() {
       .some((value) => String(value).toLowerCase().includes(keyword));
   });
 
+  function renderRecipientNames(item: Report) {
+    if (!item.recipients?.length) {
+      return "-";
+    }
+    return (
+      <div className="recipient-status-list">
+        {item.recipients.map((recipient) => (
+          <span key={recipient.id}>{recipient.name}</span>
+        ))}
+      </div>
+    );
+  }
+
+  function renderRecipientStatuses(item: Report) {
+    if (!item.recipients?.length) {
+      return "-";
+    }
+    return (
+      <div className="recipient-status-list">
+        {item.recipients.map((recipient) => (
+          <span key={recipient.id}>
+            {recipient.confirmed_at
+              ? `확인완료 ${formatDateTime(recipient.confirmed_at)}`
+              : recipient.returned_at
+                ? `보완요청 ${recipient.return_reason || ""}`
+                : recipient.is_read
+                  ? `읽음 ${formatDateTime(recipient.read_at)}`
+                  : "안읽음"}
+          </span>
+        ))}
+      </div>
+    );
+  }
+
   return (
     <AppShell title="경비지출" description="경비보고서와 경비 항목 API로 지출 내역을 관리합니다.">
       {message && <p className="notice error">{message}</p>}
@@ -697,6 +731,8 @@ export default function ExpensesPage() {
                 <th>제목</th>
                 <th>지출처</th>
                 <th>열람</th>
+                <th>수신자</th>
+                <th>수신 상태</th>
                 <th>상태</th>
                 <th>보고일</th>
                 <th>총 금액</th>
@@ -722,6 +758,8 @@ export default function ExpensesPage() {
                   </td>
                   <td>{report.expense_place || "-"}</td>
                   <td>{report.is_viewed ? "열람" : "미열람"}</td>
+                  <td>{renderRecipientNames(report)}</td>
+                  <td>{renderRecipientStatuses(report)}</td>
                   <td>
                     <span className={`status-pill ${report.status === "APPROVED" ? "blue" : report.status === "REJECTED" ? "red" : "muted"}`}>
                       {labelOf(reportStatusLabels, report.status)}
@@ -746,7 +784,7 @@ export default function ExpensesPage() {
               ))}
               {!reports.length && (
                 <tr>
-                  <td colSpan={isAdmin ? 8 : 7}>조회된 경비보고서가 없습니다.</td>
+                  <td colSpan={isAdmin ? 10 : 9}>조회된 경비보고서가 없습니다.</td>
                 </tr>
               )}
             </tbody>

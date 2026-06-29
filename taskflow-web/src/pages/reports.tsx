@@ -48,7 +48,9 @@ const emptyForm: ReportInput = {
 };
 
 function userLabel(user: UserListItem) {
-  return `${user.display_name || user.email} (${user.department || "-"} / ${user.position || "-"})`;
+  const name = user.display_name || user.email;
+  const details = [user.department, user.position].filter(Boolean);
+  return details.length ? `${name} (${details.join(" / ")})` : name;
 }
 
 export default function ReportsPage() {
@@ -311,6 +313,40 @@ export default function ReportsPage() {
     );
   }
 
+  function renderRecipientNames(item: Report) {
+    if (!item.recipients?.length) {
+      return "-";
+    }
+    return (
+      <div className="recipient-status-list">
+        {item.recipients.map((recipient) => (
+          <span key={recipient.id}>{recipient.name}</span>
+        ))}
+      </div>
+    );
+  }
+
+  function renderRecipientStatuses(item: Report) {
+    if (!item.recipients?.length) {
+      return "-";
+    }
+    return (
+      <div className="recipient-status-list">
+        {item.recipients.map((recipient) => (
+          <span key={recipient.id}>
+            {recipient.confirmed_at
+              ? `확인완료 ${formatDateTime(recipient.confirmed_at)}`
+              : recipient.returned_at
+                ? `보완요청 ${recipient.return_reason || ""}`
+                : recipient.is_read
+                  ? `읽음 ${formatDateTime(recipient.read_at)}`
+                  : "안읽음"}
+          </span>
+        ))}
+      </div>
+    );
+  }
+
   async function handleSubmitReport(id: number) {
     if (!accessToken) {
       return;
@@ -429,11 +465,11 @@ export default function ReportsPage() {
               </div>
               {!!recipientResults.length && (
                 <div className="assignee-dropdown">
-                  {recipientResults.map((entry) => (
-                    <button key={entry.id} onClick={() => selectRecipient(entry)} type="button">
-                      {entry.display_name || entry.email} | {entry.department || "-"} | {entry.position || "-"}
-                    </button>
-                  ))}
+                    {recipientResults.map((entry) => (
+                      <button key={entry.id} onClick={() => selectRecipient(entry)} type="button">
+                        {userLabel(entry)}
+                      </button>
+                    ))}
                 </div>
               )}
             </label>
@@ -539,7 +575,8 @@ export default function ReportsPage() {
                     <th>제목</th>
                     <th>상태</th>
                     <th>보고일</th>
-                    <th>수신자 상태</th>
+                    <th>수신자</th>
+                    <th>수신 상태</th>
                     <th>관리</th>
                   </tr>
                 </thead>
@@ -552,18 +589,8 @@ export default function ReportsPage() {
                       </td>
                       <td>{labelOf(reportStatusLabels, item.status)}</td>
                       <td>{formatDate(item.report_date)}</td>
-                      <td>
-                        <div className="recipient-status-list">
-                          {item.recipients?.map((recipient) => (
-                            <span key={recipient.id}>
-                              {recipient.name} {recipient.is_read ? `읽음 ${formatDateTime(recipient.read_at)}` : "안읽음"}
-                              {recipient.confirmed_at ? ` / 확인 ${formatDateTime(recipient.confirmed_at)}` : ""}
-                              {recipient.returned_at ? ` / 보완요청 ${recipient.return_reason || ""}` : ""}
-                            </span>
-                          ))}
-                          {!item.recipients?.length && "-"}
-                        </div>
-                      </td>
+                      <td>{renderRecipientNames(item)}</td>
+                      <td>{renderRecipientStatuses(item)}</td>
                       <td className="table-actions">
                         {item.status === "DRAFT" && (
                           <button className="ghost-button" onClick={() => handleSubmitReport(item.id)} type="button">
@@ -588,7 +615,7 @@ export default function ReportsPage() {
                   ))}
                   {!sentReports.length && (
                     <tr>
-                      <td colSpan={5}>보낸 보고서가 없습니다.</td>
+                      <td colSpan={6}>보낸 보고서가 없습니다.</td>
                     </tr>
                   )}
                 </tbody>
@@ -605,7 +632,7 @@ export default function ReportsPage() {
                   <th>작성자</th>
                   <th>상태</th>
                   <th>보고일</th>
-                  <th>내 열람</th>
+                  <th>수신 상태</th>
                   <th>관리</th>
                 </tr>
               </thead>

@@ -65,6 +65,22 @@ function cleanInput(input: WorkRequestInput): WorkRequestInput {
   };
 }
 
+function userLabel(user: UserListItem) {
+  const name = user.display_name || user.email;
+  const details = [user.department, user.position].filter(Boolean);
+  return details.length ? `${name} (${details.join(" / ")})` : name;
+}
+
+function detailLabel(department?: string, position?: string) {
+  const details = [department, position].filter(Boolean);
+  return details.length ? details.join(" / ") : "-";
+}
+
+function applicantLabel(item: AdminApprovalRequest) {
+  const details = detailLabel(item.applicant_department, item.applicant_position);
+  return details === "-" ? item.applicant_email : `${item.applicant_email} / ${details}`;
+}
+
 const crcTable = Array.from({ length: 256 }, (_, index) => {
   let current = index;
   for (let bit = 0; bit < 8; bit += 1) {
@@ -175,7 +191,6 @@ export default function WorkRequestsPage() {
   const [items, setItems] = useState<WorkRequest[]>([]);
   const [approvalItems, setApprovalItems] = useState<AdminApprovalRequest[]>([]);
   const [users, setUsers] = useState<UserListItem[]>([]);
-  const [manualAssigneeInput, setManualAssigneeInput] = useState("");
   const [manualAssignees, setManualAssignees] = useState<string[]>([]);
   const [selectedAssignees, setSelectedAssignees] = useState<UserListItem[]>([]);
   const [assigneeSearch, setAssigneeSearch] = useState("");
@@ -243,7 +258,6 @@ export default function WorkRequestsPage() {
     if (router.query.mode === "create") {
       setEditingId(null);
       setForm(emptyForm);
-      setManualAssigneeInput("");
       setManualAssignees([]);
       setSelectedAssignees([]);
       setAssigneeSearch("");
@@ -276,7 +290,6 @@ export default function WorkRequestsPage() {
       priority: item.priority,
       deadline_at: toDateTimeInput(item.deadline_at),
     });
-    setManualAssigneeInput("");
     setManualAssignees([]);
     setSelectedAssignees(nextSelectedAssignees);
     setAssigneeSearch("");
@@ -285,7 +298,6 @@ export default function WorkRequestsPage() {
   function resetForm() {
     setEditingId(null);
     setForm(emptyForm);
-    setManualAssigneeInput("");
     setManualAssignees([]);
     setSelectedAssignees([]);
     setAssigneeSearch("");
@@ -295,7 +307,6 @@ export default function WorkRequestsPage() {
 
   async function handleAssigneeSearch(value: string) {
     setAssigneeSearch(value);
-    setManualAssigneeInput("");
     if (!accessToken || value.trim().length < 1) {
       setAssigneeResults([]);
       return;
@@ -318,7 +329,7 @@ export default function WorkRequestsPage() {
   }
 
   function addManualAssignee() {
-    const values = manualAssigneeInput
+    const values = assigneeSearch
       .split(/[,\n]/)
       .map((value) => value.trim())
       .filter(Boolean);
@@ -327,7 +338,8 @@ export default function WorkRequestsPage() {
     }
     setManualAssignees((current) => Array.from(new Set([...current, ...values])));
     setForm((current) => ({ ...current, assignee_input: "", assignee_inputs: Array.from(new Set([...(current.assignee_inputs ?? []), ...values])) }));
-    setManualAssigneeInput("");
+    setAssigneeSearch("");
+    setAssigneeResults([]);
   }
 
   function handleManualAssigneeKeyDown(event: KeyboardEvent<HTMLInputElement>) {
@@ -531,7 +543,7 @@ export default function WorkRequestsPage() {
               <div className="approval-card" key={item.id}>
                 <div>
                   <strong>{item.applicant_name || item.applicant_email}</strong>
-                  <p>{item.applicant_email} / {item.applicant_department || "-"} / {item.applicant_position || "-"}</p>
+                  <p>{applicantLabel(item)}</p>
                   <p>신청일시: {formatDateTime(item.created_at)}</p>
                   <p>신청 사유: {item.reason}</p>
                   <p>관련 경력/업무: {item.experience}</p>
@@ -594,19 +606,28 @@ export default function WorkRequestsPage() {
           </div>
 
           <div className="form-grid two">
-            <label>
-              <span>담당자 수기 입력</span>
+            <label className="assignee-search">
+              <span>담당자</span>
               <div className="inline-entry">
                 <input
-                  onChange={(event) => setManualAssigneeInput(event.target.value)}
+                  onChange={(event) => handleAssigneeSearch(event.target.value)}
                   onKeyDown={handleManualAssigneeKeyDown}
-                  placeholder="이메일, 아이디, 이름 입력"
-                  value={manualAssigneeInput}
+                  placeholder="이름, 이메일, 부서, 직함 검색 또는 직접 입력"
+                  value={assigneeSearch}
                 />
                 <button className="ghost-button" onClick={addManualAssignee} type="button">
                   추가
                 </button>
               </div>
+              {!!assigneeResults.length && (
+                <div className="assignee-dropdown">
+                  {assigneeResults.map((entry) => (
+                    <button key={entry.id} onClick={() => selectAssignee(entry)} type="button">
+                      {userLabel(entry)}
+                    </button>
+                  ))}
+                </div>
+              )}
             </label>
             <label>
               <span>마감일</span>
@@ -617,24 +638,6 @@ export default function WorkRequestsPage() {
               />
             </label>
           </div>
-
-          <label className="assignee-search">
-            <span>담당자 카드 선택</span>
-            <input
-              onChange={(event) => handleAssigneeSearch(event.target.value)}
-              placeholder="이름, 이메일, 부서, 직함 검색"
-              value={assigneeSearch}
-            />
-            {!!assigneeResults.length && (
-              <div className="assignee-dropdown">
-                {assigneeResults.map((entry) => (
-                  <button key={entry.id} onClick={() => selectAssignee(entry)} type="button">
-                    {entry.display_name || entry.email} | {entry.department || "-"} | {entry.position || "-"}
-                  </button>
-                ))}
-              </div>
-            )}
-          </label>
 
           <div className="recipient-picker">
             {manualAssignees.map((assignee) => (
@@ -649,7 +652,7 @@ export default function WorkRequestsPage() {
                 onClick={() => removeSelectedAssignee(assignee.id)}
                 type="button"
               >
-                {assignee.display_name || assignee.email} ({assignee.department || "-"} / {assignee.position || "-"})
+                {userLabel(assignee)}
               </button>
             ))}
           </div>

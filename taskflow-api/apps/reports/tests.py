@@ -40,6 +40,12 @@ class ReportApiTests(APITestCase):
         self.assertEqual(report.status, Report.ReportStatus.CONFIRMED)
 
     def test_report_recipient_read_confirm_and_resubmit_flow(self):
+        self.writer.first_name = "김정훈"
+        self.writer.department = "개발팀"
+        self.writer.position = "과장"
+        self.writer.save(update_fields=["first_name", "department", "position"])
+        self.approver.first_name = "부평맛남"
+        self.approver.save(update_fields=["first_name"])
         self.client.force_authenticate(self.writer)
         create_response = self.client.post(
             "/api/reports/",
@@ -58,10 +64,13 @@ class ReportApiTests(APITestCase):
 
         submit_response = self.client.post(f"/api/reports/{report.id}/submit/", {}, format="json")
         self.assertEqual(submit_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(submit_response.data["data"]["recipients"][0]["name"], "부평맛남")
+        self.assertNotIn("None", submit_response.data["data"]["recipients"][0]["name"])
 
         self.client.force_authenticate(self.approver)
         detail_response = self.client.get(f"/api/reports/{report.id}/")
         self.assertEqual(detail_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(detail_response.data["data"]["writer_name"], "김정훈 (개발팀 / 과장)")
         recipient_record = ReportRecipient.objects.get(report=report, recipient=self.approver)
         first_read_at = recipient_record.read_at
         self.assertTrue(recipient_record.is_read)
@@ -227,6 +236,7 @@ class ReportApiTests(APITestCase):
             title="경비지출",
             content="외근 경비",
             report_date=timezone.localdate(),
+            status=Report.ExpenseStatus.SUBMITTED,
         )
 
         item_response = self.client.post(
@@ -248,6 +258,48 @@ class ReportApiTests(APITestCase):
         self.assertEqual(approve_response.status_code, status.HTTP_200_OK)
         report.refresh_from_db()
         self.assertEqual(report.status, Report.ExpenseStatus.APPROVED)
+
+        settle_response = self.client.patch(f"/api/reports/{report.id}/expenses/settle/", {}, format="json")
+        self.assertEqual(settle_response.status_code, status.HTTP_200_OK)
+        report.refresh_from_db()
+        self.assertEqual(report.status, Report.ExpenseStatus.SETTLING)
+
+        settled_response = self.client.patch(f"/api/reports/{report.id}/expenses/settled/", {}, format="json")
+        self.assertEqual(settled_response.status_code, status.HTTP_200_OK)
+        report.refresh_from_db()
+        self.assertEqual(report.status, Report.ExpenseStatus.SETTLED)
+
+    def test_approver_can_bulk_update_expense_status(self):
+        reports = [
+            Report.objects.create(
+                writer=self.writer,
+                approver=self.approver,
+                report_type=Report.ReportType.EXPENSE_REPORT,
+                title=f"경비지출 {index}",
+                content="외근 경비",
+                report_date=timezone.localdate(),
+                status=Report.ExpenseStatus.SUBMITTED,
+            )
+            for index in range(2)
+        ]
+
+        self.client.force_authenticate(self.approver)
+        approve_response = self.client.patch(
+            "/api/reports/expenses/bulk-status/",
+            {"ids": [report.id for report in reports], "status": "APPROVED"},
+            format="json",
+        )
+        self.assertEqual(approve_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(approve_response.data["data"]["updated_count"], 2)
+        self.assertEqual(set(Report.objects.filter(id__in=[report.id for report in reports]).values_list("status", flat=True)), {Report.ExpenseStatus.APPROVED})
+
+        settle_response = self.client.patch(
+            "/api/reports/expenses/bulk-status/",
+            {"ids": [report.id for report in reports], "status": "SETTLING"},
+            format="json",
+        )
+        self.assertEqual(settle_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(set(Report.objects.filter(id__in=[report.id for report in reports]).values_list("status", flat=True)), {Report.ExpenseStatus.SETTLING})
 
     def test_report_summary_accepts_start_and_end_date(self):
         self.client.force_authenticate(self.writer)

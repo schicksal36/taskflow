@@ -305,6 +305,13 @@ npm run start
 | `src/pages/admin/users.tsx` | 계정관리 |
 | `src/styles/globals.css` | 공통 UI, 카드/테이블/폼/반응형 스타일 |
 
+### 개발 규칙
+
+- 사용자에게 보이는 기능을 추가하거나 기존 기능의 동작/화면을 변경하면 `taskflow-web/src/lib/releaseNotes.ts`에 릴리즈노트를 함께 기록합니다.
+- 릴리즈노트는 최신 항목이 위로 오도록 추가하고, `date`, `title`, `summary`, `details`를 모두 작성합니다.
+- `summary`는 목록에서 빠르게 읽히도록 짧게 쓰고, 구체적인 변경 내용은 `details`에 항목별로 정리합니다.
+- 단순 오타 수정, 내부 리팩터링, 테스트만 변경한 경우처럼 사용자 화면이나 사용 흐름이 바뀌지 않는 작업은 릴리즈노트 생략이 가능합니다.
+
 ### 프론트엔드 검증
 
 ```bash

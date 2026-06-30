@@ -83,3 +83,19 @@ class WorkRequestFile(TimeStampedModel):
     work_request = models.ForeignKey(WorkRequest, on_delete=models.CASCADE, related_name="files")
     media_file = models.ForeignKey("media_files.MediaFile", on_delete=models.CASCADE)
     uploaded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+
+
+class WorkRequestReadRecord(models.Model):
+    """업무요청 담당자별 최초 열람 기록."""
+
+    work_request = models.ForeignKey(WorkRequest, on_delete=models.CASCADE, related_name="read_records")
+    assignee = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="work_request_read_records")
+    is_read = models.BooleanField(default=False)
+    read_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        unique_together = ["work_request", "assignee"]
+        indexes = [
+            models.Index(fields=["assignee", "is_read"]),
+            models.Index(fields=["work_request", "read_at"]),
+        ]

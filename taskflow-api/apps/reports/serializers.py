@@ -48,9 +48,9 @@ class ReportRecipientSerializer(serializers.ModelSerializer):
             obj: ReportRecipient 인스턴스
 
         Returns:
-            사용자 이름이 있으면 이름, 없으면 first_name/email 순서의 표시 문자열
+            사용자 이름이 있으면 이름, 없으면 email 순서의 표시 문자열
         """
-        return obj.recipient.get_full_name() or obj.recipient.first_name or obj.recipient.email
+        return obj.recipient.first_name or obj.recipient.email
 
 
 class ExpenseItemSerializer(serializers.ModelSerializer):
@@ -104,7 +104,9 @@ class ReportFileSerializer(serializers.ModelSerializer):
 class ReportListSerializer(serializers.ModelSerializer):
     """목록 화면에서 필요한 최소 보고서 정보 serializer."""
 
-    writer_name = serializers.CharField(source="writer.username", read_only=True)
+    writer_name = serializers.SerializerMethodField()
+    writer_department = serializers.CharField(source="writer.department", read_only=True)
+    writer_position = serializers.CharField(source="writer.position", read_only=True)
     approver_name = serializers.CharField(source="approver.username", read_only=True)
     recipient_ids = serializers.PrimaryKeyRelatedField(source="recipients", many=True, read_only=True)
     recipients = ReportRecipientSerializer(source="recipient_records", many=True, read_only=True)
@@ -118,6 +120,8 @@ class ReportListSerializer(serializers.ModelSerializer):
             "id",
             "writer",
             "writer_name",
+            "writer_department",
+            "writer_position",
             "approver",
             "approver_name",
             "recipient_ids",
@@ -134,6 +138,14 @@ class ReportListSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = ["writer", "status", "created_at", "updated_at"]
+
+    def get_writer_name(self, obj):
+        """작성자 표시명을 이름과 조직 정보로 반환합니다."""
+        writer = obj.writer
+        name = writer.first_name or writer.get_username()
+        details = [writer.department, writer.position]
+        detail_text = " / ".join([value for value in details if value])
+        return f"{name} ({detail_text})" if detail_text else name
 
     def get_expense_place(self, obj):
         """경비지출 목록에서 대표 지출처를 표시합니다."""

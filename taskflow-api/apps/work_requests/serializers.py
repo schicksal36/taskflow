@@ -13,20 +13,57 @@ from django.db.models import Q
 from django.utils import timezone
 from rest_framework import serializers
 
-from .models import WorkRequest, WorkRequestComment, WorkRequestFile
+from .models import WorkRequest, WorkRequestComment, WorkRequestFile, WorkRequestReadRecord
+
+
+def user_display_label(user):
+    """사용자 표시명을 이름과 조직 정보로 반환합니다."""
+    if not user:
+        return ""
+    name = user.first_name or user.get_username()
+    details = [user.department, user.position]
+    detail_text = " / ".join([value for value in details if value])
+    return f"{name} ({detail_text})" if detail_text else name
+
+
+class WorkRequestReadRecordSerializer(serializers.ModelSerializer):
+    """업무요청 담당자별 열람 상태."""
+
+    name = serializers.SerializerMethodField()
+    department = serializers.CharField(source="assignee.department", read_only=True)
+    position = serializers.CharField(source="assignee.position", read_only=True)
+
+    class Meta:
+        model = WorkRequestReadRecord
+        fields = ["id", "assignee", "name", "department", "position", "is_read", "read_at"]
+
+    def get_name(self, obj):
+        return obj.assignee.first_name or obj.assignee.get_username()
+
+
+def sync_work_request_read_records(work_request):
+    """담당자 목록과 열람 기록을 동기화합니다."""
+    assignees = list(work_request.assignees.all())
+    if work_request.assignee and all(user.pk != work_request.assignee_id for user in assignees):
+        assignees.insert(0, work_request.assignee)
+    for assignee in assignees:
+        WorkRequestReadRecord.objects.get_or_create(work_request=work_request, assignee=assignee)
+    if assignees:
+        WorkRequestReadRecord.objects.filter(work_request=work_request).exclude(assignee__in=assignees).delete()
 
 
 class WorkRequestListSerializer(serializers.ModelSerializer):
     """업무요청 목록 화면용 serializer.
 
-    목록에서는 긴 본문보다 요청자/담당자 이름, 상태, 우선순위, 마감일이 중요하므로
-    content는 상세 serializer에서만 제공합니다.
+    목록 화면에서 바로 수정 폼을 채우므로 content도 함께 제공합니다.
     """
 
-    requester_name = serializers.CharField(source="requester.username", read_only=True)
-    assignee_name = serializers.CharField(source="assignee.username", read_only=True)
+    requester_name = serializers.SerializerMethodField()
+    assignee_name = serializers.SerializerMethodField()
     assignee_ids = serializers.PrimaryKeyRelatedField(source="assignees", many=True, read_only=True)
     assignee_names = serializers.SerializerMethodField()
+    read_records = serializers.SerializerMethodField()
+    has_read_assignee = serializers.SerializerMethodField()
     due_date = serializers.SerializerMethodField()
     reminder_date = serializers.SerializerMethodField()
     files = serializers.SerializerMethodField()
@@ -36,12 +73,15 @@ class WorkRequestListSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "title",
+            "content",
             "requester",
             "requester_name",
             "assignee",
             "assignee_name",
             "assignee_ids",
             "assignee_names",
+            "read_records",
+            "has_read_assignee",
             "status",
             "priority",
             "deadline_at",
@@ -64,11 +104,21 @@ class WorkRequestListSerializer(serializers.ModelSerializer):
     def get_files(self, obj):
         return WorkRequestFileSerializer(obj.files.all(), many=True, context=self.context).data
 
+    def get_requester_name(self, obj):
+        return user_display_label(obj.requester)
+
+    def get_assignee_name(self, obj):
+        return user_display_label(obj.assignee)
+
     def get_assignee_names(self, obj):
-        return [
-            assignee.get_full_name() or assignee.first_name or assignee.email or assignee.username
-            for assignee in obj.assignees.all()
-        ]
+        return [user_display_label(assignee) for assignee in obj.assignees.all()]
+
+    def get_read_records(self, obj):
+        sync_work_request_read_records(obj)
+        return WorkRequestReadRecordSerializer(obj.read_records.select_related("assignee"), many=True).data
+
+    def get_has_read_assignee(self, obj):
+        return obj.read_records.filter(is_read=True).exists()
 
 
 class WorkRequestDetailSerializer(WorkRequestListSerializer):
@@ -109,6 +159,7 @@ class WorkRequestCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = WorkRequest
         fields = [
+            "id",
             "title",
             "content",
             "assignee",
@@ -120,6 +171,7 @@ class WorkRequestCreateSerializer(serializers.ModelSerializer):
             "due_date",
             "reminder_date",
         ]
+        read_only_fields = ["id"]
 
     def resolve_assignee_input(self, value):
         """수기로 입력한 이메일/아이디/이름을 담당자 사용자로 변환합니다."""
@@ -182,6 +234,7 @@ class WorkRequestCreateSerializer(serializers.ModelSerializer):
             work_request.assignees.set(assignees)
         elif work_request.assignee:
             work_request.assignees.set([work_request.assignee])
+        sync_work_request_read_records(work_request)
         return work_request
 
 
@@ -207,6 +260,7 @@ class WorkRequestUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = WorkRequest
         fields = [
+            "id",
             "title",
             "content",
             "assignee",
@@ -218,6 +272,7 @@ class WorkRequestUpdateSerializer(serializers.ModelSerializer):
             "due_date",
             "reminder_date",
         ]
+        read_only_fields = ["id"]
 
     def update(self, instance, validated_data):
         due_date = validated_data.pop("due_date", None)
@@ -240,6 +295,7 @@ class WorkRequestUpdateSerializer(serializers.ModelSerializer):
         instance = super().update(instance, validated_data)
         if selected_assignees is not None or assignee_input or assignee_inputs:
             instance.assignees.set(assignees)
+            sync_work_request_read_records(instance)
         return instance
 
 

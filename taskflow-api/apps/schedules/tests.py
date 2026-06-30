@@ -13,6 +13,10 @@ class ScheduleApiTests(APITestCase):
     def setUp(self):
         User = get_user_model()
         self.owner = User.objects.create_user("owner", "owner@example.com", "StrongPass123!")
+        self.owner.first_name = "김정훈"
+        self.owner.department = "솔루션사업부"
+        self.owner.position = "과장"
+        self.owner.save(update_fields=["first_name", "department", "position"])
         self.member = User.objects.create_user("member", "member@example.com", "StrongPass123!")
 
     def test_create_shared_schedule_and_participant_response(self):
@@ -66,6 +70,35 @@ class ScheduleApiTests(APITestCase):
         schedule = Schedule.objects.get(title="거래처 미팅")
         self.assertEqual(schedule.category, "현장 방문")
         self.assertIsNone(schedule.end_at)
+
+    def test_schedule_list_shows_other_users_events_without_edit_permission(self):
+        start_at = timezone.now() + timezone.timedelta(days=1)
+        schedule = Schedule.objects.create(
+            created_by=self.owner,
+            title="전체 캘린더 표시 일정",
+            category="MEETING",
+            start_at=start_at,
+            end_at=start_at + timezone.timedelta(hours=1),
+        )
+
+        self.client.force_authenticate(self.member)
+        list_response = self.client.get("/api/schedules/")
+
+        self.assertEqual(list_response.status_code, status.HTTP_200_OK)
+        self.assertIn("전체 캘린더 표시 일정", [item["title"] for item in list_response.data])
+        schedule_payload = next(item for item in list_response.data if item["id"] == schedule.id)
+        self.assertEqual(schedule_payload["owner_name"], "김정훈")
+        self.assertEqual(schedule_payload["owner_department"], "솔루션사업부")
+        self.assertEqual(schedule_payload["owner_position"], "과장")
+        self.assertEqual(schedule_payload["owner_email"], "owner@example.com")
+
+        update_response = self.client.patch(
+            f"/api/schedules/{schedule.id}/",
+            {"title": "수정 시도"},
+            format="json",
+        )
+
+        self.assertEqual(update_response.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_integrated_calendar_returns_schedule_events(self):
         self.client.force_authenticate(self.owner)

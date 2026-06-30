@@ -23,7 +23,7 @@ from apps.notifications.models import Notification
 from apps.notifications.services import create_notification
 from apps.todos.models import Todo
 
-from .models import WorkRequest, WorkRequestComment, WorkRequestFile
+from .models import WorkRequest, WorkRequestComment, WorkRequestFile, WorkRequestReadRecord
 from .serializers import (
     WorkRequestAssigneeSerializer,
     WorkRequestCommentSerializer,
@@ -36,6 +36,7 @@ from .serializers import (
     WorkRequestRejectSerializer,
     WorkRequestStatusSerializer,
     WorkRequestUpdateSerializer,
+    sync_work_request_read_records,
 )
 
 
@@ -83,6 +84,12 @@ class WorkRequestQuerysetMixin:
         if work_request.requester != self.request.user:
             raise PermissionDenied("요청자만 처리할 수 있습니다.")
 
+    def ensure_not_read_by_assignee(self, work_request):
+        """담당자가 열람한 업무요청은 요청자가 본문을 수정/삭제하지 못하게 합니다."""
+        sync_work_request_read_records(work_request)
+        if work_request.read_records.filter(is_read=True).exists():
+            raise PermissionDenied("담당자가 열람한 업무요청은 수정하거나 삭제할 수 없습니다.")
+
     def ensure_assignee(self, work_request):
         """담당자만 수행할 수 있는 완료 요청인지 확인합니다."""
         if work_request.assignee != self.request.user and not work_request.assignees.filter(pk=self.request.user.pk).exists():
@@ -119,12 +126,29 @@ class WorkRequestDetailUpdateDeleteView(WorkRequestQuerysetMixin, generics.Retri
             return WorkRequestUpdateSerializer
         return WorkRequestDetailSerializer
 
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        if instance.requester != request.user and (
+            instance.assignee == request.user or instance.assignees.filter(pk=request.user.pk).exists()
+        ):
+            sync_work_request_read_records(instance)
+            record, _ = WorkRequestReadRecord.objects.get_or_create(work_request=instance, assignee=request.user)
+            if not record.is_read:
+                record.is_read = True
+                record.read_at = timezone.now()
+                record.save(update_fields=["is_read", "read_at"])
+        serializer = self.get_serializer(instance)
+        return success_response(serializer.data, "업무요청을 조회했습니다.")
+
     def perform_update(self, serializer):
-        self.ensure_requester(self.get_object())
+        work_request = self.get_object()
+        self.ensure_requester(work_request)
+        self.ensure_not_read_by_assignee(work_request)
         serializer.save()
 
     def perform_destroy(self, instance):
         self.ensure_requester(instance)
+        self.ensure_not_read_by_assignee(instance)
         instance.delete()
 
 
@@ -152,6 +176,14 @@ class WorkRequestStatusView(WorkRequestFieldUpdateView):
     """업무요청 status 단건 변경 API."""
 
     serializer_class = WorkRequestStatusSerializer
+
+    def patch(self, request, pk):
+        work_request = self.get_object_for_user(pk)
+        self.ensure_assignee(work_request)
+        serializer = self.serializer_class(work_request, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return success_response(WorkRequestDetailSerializer(work_request).data, "업무요청이 수정되었습니다.")
 
 
 class WorkRequestAssigneeView(WorkRequestFieldUpdateView):

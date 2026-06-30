@@ -179,6 +179,34 @@ class UserApiTests(APITestCase):
         self.assertEqual(ceo.position, "대표이사")
         self.assertTrue(ceo.is_staff)
 
+    def test_user_search_includes_ceo_recipient_card(self):
+        User = get_user_model()
+        requester = User.objects.create_user(
+            username="requester@example.com",
+            email="requester@example.com",
+            password="StrongPass123!",
+        )
+        ceo = User.objects.create_user(
+            username="ceo-search@example.com",
+            email="ceo-search@example.com",
+            password="StrongPass123!",
+            first_name="김대표",
+            role=User.UserRole.CEO,
+        )
+        superuser = User.objects.create_superuser(
+            username="root-search@example.com",
+            email="root-search@example.com",
+            password="StrongPass123!",
+        )
+
+        self.client.force_authenticate(requester)
+        response = self.client.get("/api/users/search/", {"q": "대표"})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        emails = [item["email"] for item in response.data]
+        self.assertIn(ceo.email, emails)
+        self.assertNotIn(superuser.email, emails)
+
     def test_normal_user_cannot_self_assign_ceo_position(self):
         User = get_user_model()
         user = User.objects.create_user(

@@ -42,6 +42,8 @@ class Report(TimeStampedModel):
         REVIEWING = "REVIEWING", "검토중"
         APPROVED = "APPROVED", "승인"
         REJECTED = "REJECTED", "반려"
+        SETTLING = "SETTLING", "정산중"
+        SETTLED = "SETTLED", "정산완료"
         CANCELED = "CANCELED", "취소"
 
     writer = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="written_reports")

@@ -72,9 +72,10 @@ class UserListView(generics.ListAPIView):
     serializer_class = UserListSerializer
 
     def get_queryset(self):
-        """비활성 계정과 운영자 계정은 업무 배정 대상에서 제외합니다."""
+        """비활성 계정과 슈퍼유저는 업무 배정 대상에서 제외하고 대표이사는 수신자로 노출합니다."""
         return (
-            User.objects.filter(is_active=True, is_staff=False, is_superuser=False)
+            User.objects.filter(is_active=True, is_superuser=False)
+            .filter(Q(is_staff=False) | Q(role=User.UserRole.CEO))
             .order_by("username")
         )
 

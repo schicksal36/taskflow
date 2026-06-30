@@ -34,7 +34,10 @@ class ScheduleListSerializer(serializers.ModelSerializer):
     """
 
     owner = serializers.IntegerField(source="created_by_id", read_only=True)
-    owner_name = serializers.CharField(source="created_by.username", read_only=True)
+    owner_name = serializers.SerializerMethodField()
+    owner_email = serializers.EmailField(source="created_by.email", read_only=True)
+    owner_department = serializers.CharField(source="created_by.department", read_only=True)
+    owner_position = serializers.CharField(source="created_by.position", read_only=True)
     content = serializers.CharField(source="description", read_only=True)
     schedule_type = serializers.CharField(source="category", read_only=True)
     is_shared = serializers.SerializerMethodField()
@@ -50,6 +53,9 @@ class ScheduleListSerializer(serializers.ModelSerializer):
             "title",
             "owner",
             "owner_name",
+            "owner_email",
+            "owner_department",
+            "owner_position",
             "created_by",
             "created_by_name",
             "schedule_type",
@@ -71,7 +77,13 @@ class ScheduleListSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["owner", "created_by", "created_at", "updated_at"]
 
-    created_by_name = serializers.CharField(source="created_by.username", read_only=True)
+    created_by_name = serializers.SerializerMethodField()
+
+    def get_owner_name(self, obj):
+        return obj.created_by.first_name or obj.created_by.username or obj.created_by.email
+
+    def get_created_by_name(self, obj):
+        return self.get_owner_name(obj)
 
     def get_is_shared(self, obj):
         """모든 일정은 공유 일정이므로 항상 True를 반환합니다."""

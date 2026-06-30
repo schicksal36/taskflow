@@ -39,18 +39,19 @@ from .serializers import (
 class ReportQuerysetMixin:
     """보고서 API에서 공통으로 사용하는 권한/조회 보조 기능.
 
-    보고서는 작성자(writer)와 승인자(approver)만 접근할 수 있습니다. 이 믹스인은
-    각 View가 같은 접근 규칙을 반복 구현하지 않도록 관련 보고서만 필터링하고,
-    상태 변경 API에서 필요한 역할 검사를 제공합니다.
+    대표이사/관리자는 전체 보고서를 조회하고, 일반 사용자는 작성자(writer),
+    승인자(approver), 수신자인 보고서만 접근합니다. 이 믹스인은 각 View가 같은
+    접근 규칙을 반복 구현하지 않도록 관련 보고서만 필터링하고, 상태 변경 API에서
+    필요한 역할 검사를 제공합니다.
     """
 
     permission_classes = [permissions.IsAuthenticated]
 
     def related_queryset(self):
-        """로그인 사용자가 작성자 또는 승인자인 보고서만 반환합니다."""
+        """역할에 따라 접근 가능한 보고서 범위를 반환합니다."""
         user = self.request.user
         role = getattr(user, "role", "")
-        if role in {"CEO", "SUPERUSER"}:
+        if role in {"CEO", "ADMIN", "SUPERUSER"}:
             return Report.objects.all()
         return Report.objects.filter(Q(writer=user) | Q(approver=user) | Q(recipients=user) | Q(recipient_records__recipient=user)).distinct()
 
@@ -145,9 +146,15 @@ class ReportListCreateView(ReportQuerysetMixin, generics.ListCreateAPIView):
     def get_queryset(self):
         qs = self.related_queryset()
         role = getattr(self.request.user, "role", "")
-        if role not in {"CEO", "SUPERUSER"}:
+        if role not in {"CEO", "ADMIN", "SUPERUSER"}:
             qs = qs.exclude(Q(status=Report.ReportStatus.DRAFT) & ~Q(writer=self.request.user))
             qs = qs.exclude(Q(status=Report.ReportStatus.CANCELED) & ~Q(writer=self.request.user))
+        writer_id = self.request.query_params.get("writer")
+        department = self.request.query_params.get("department")
+        if writer_id and writer_id.isdigit() and role in {"CEO", "ADMIN", "SUPERUSER"}:
+            qs = qs.filter(writer_id=writer_id)
+        if department and role in {"CEO", "ADMIN", "SUPERUSER"}:
+            qs = qs.filter(writer__department=department)
         return qs
 
     def get_serializer_class(self):
@@ -505,16 +512,18 @@ class ReportResubmitView(ReportQuerysetMixin, APIView):
 
 
 class ExpenseReviewView(ReportQuerysetMixin, APIView):
-    """경비지출 보고서를 검토중 상태로 전환합니다."""
+    """기존 검토중 API를 정산중 전환으로 호환 처리합니다."""
 
     def patch(self, request, pk):
         report = self.get_report(pk)
         self.ensure_approver(report)
         self.ensure_expense(report)
-        report.status = Report.ExpenseStatus.REVIEWING
+        if report.status != Report.ExpenseStatus.APPROVED:
+            raise ValidationError("승인 상태의 경비지출만 정산중으로 변경할 수 있습니다.")
+        report.status = Report.ExpenseStatus.SETTLING
         report.save(update_fields=["status"])
-        create_notification(report.writer, Notification.Type.EXPENSE, "경비지출 보고가 검토중입니다.", report.title, "REPORT", report.id)
-        return success_response(ReportDetailSerializer(report).data, "경비지출 보고를 검토중으로 변경했습니다.")
+        create_notification(report.writer, Notification.Type.EXPENSE, "경비지출 보고가 정산중입니다.", report.title, "REPORT", report.id)
+        return success_response(ReportDetailSerializer(report).data, "경비지출 보고를 정산중으로 변경했습니다.")
 
 
 class ExpenseApproveView(ReportQuerysetMixin, APIView):
@@ -524,6 +533,8 @@ class ExpenseApproveView(ReportQuerysetMixin, APIView):
         report = self.get_report(pk)
         self.ensure_approver(report)
         self.ensure_expense(report)
+        if report.status != Report.ExpenseStatus.SUBMITTED:
+            raise ValidationError("제출 상태의 경비지출만 승인할 수 있습니다.")
         report.status = Report.ExpenseStatus.APPROVED
         report.approved_at = timezone.now()
         report.save(update_fields=["status", "approved_at"])
@@ -538,6 +549,8 @@ class ExpenseRejectView(ReportQuerysetMixin, APIView):
         report = self.get_report(pk)
         self.ensure_approver(report)
         self.ensure_expense(report)
+        if report.status != Report.ExpenseStatus.SUBMITTED:
+            raise ValidationError("제출 상태의 경비지출만 반려할 수 있습니다.")
         serializer = ReportReturnSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         report.status = Report.ExpenseStatus.REJECTED
@@ -546,6 +559,37 @@ class ExpenseRejectView(ReportQuerysetMixin, APIView):
         report.save(update_fields=["status", "rejected_at", "rejected_reason"])
         create_notification(report.writer, Notification.Type.EXPENSE, "경비지출 보고가 반려되었습니다.", report.rejected_reason, "REPORT", report.id)
         return success_response(ReportDetailSerializer(report).data, "경비지출 보고를 반려했습니다.")
+
+
+class ExpenseSettleView(ReportQuerysetMixin, APIView):
+    """승인된 경비지출 보고서를 정산중 상태로 변경합니다."""
+
+    def patch(self, request, pk):
+        report = self.get_report(pk)
+        self.ensure_approver(report)
+        self.ensure_expense(report)
+        if report.status != Report.ExpenseStatus.APPROVED:
+            raise ValidationError("승인 상태의 경비지출만 정산중으로 변경할 수 있습니다.")
+        report.status = Report.ExpenseStatus.SETTLING
+        report.save(update_fields=["status"])
+        create_notification(report.writer, Notification.Type.EXPENSE, "경비지출 보고가 정산중입니다.", report.title, "REPORT", report.id)
+        return success_response(ReportDetailSerializer(report).data, "경비지출 보고를 정산중으로 변경했습니다.")
+
+
+class ExpenseSettleCompleteView(ReportQuerysetMixin, APIView):
+    """정산중 경비지출 보고서를 정산완료 상태로 변경합니다."""
+
+    def patch(self, request, pk):
+        report = self.get_report(pk)
+        self.ensure_approver(report)
+        self.ensure_expense(report)
+        if report.status not in {Report.ExpenseStatus.SETTLING, Report.ExpenseStatus.REVIEWING}:
+            raise ValidationError("정산중 상태의 경비지출만 정산완료로 변경할 수 있습니다.")
+        report.status = Report.ExpenseStatus.SETTLED
+        report.confirmed_at = timezone.now()
+        report.save(update_fields=["status", "confirmed_at"])
+        create_notification(report.writer, Notification.Type.EXPENSE, "경비지출 보고가 정산완료되었습니다.", report.title, "REPORT", report.id)
+        return success_response(ReportDetailSerializer(report).data, "경비지출 보고를 정산완료로 변경했습니다.")
 
 
 class ReportCancelView(ReportQuerysetMixin, APIView):
@@ -646,29 +690,44 @@ class ExpenseSummaryView(ReportQuerysetMixin, APIView):
 
 
 class ExpenseBulkStatusView(ReportQuerysetMixin, APIView):
-    """관리자가 여러 경비지출 보고서를 정산완료/반려 처리합니다."""
+    """승인권자가 여러 경비지출 보고서 상태를 일괄 처리합니다."""
+
+    transition_rules = {
+        Report.ExpenseStatus.APPROVED: {Report.ExpenseStatus.SUBMITTED},
+        Report.ExpenseStatus.REJECTED: {Report.ExpenseStatus.SUBMITTED},
+        Report.ExpenseStatus.SETTLING: {Report.ExpenseStatus.APPROVED},
+        Report.ExpenseStatus.SETTLED: {Report.ExpenseStatus.SETTLING, Report.ExpenseStatus.REVIEWING},
+    }
 
     def patch(self, request):
         role = getattr(request.user, "role", "")
-        if role not in {"ADMIN", "CEO", "SUPERUSER"}:
-            raise PermissionDenied("관리자 권한이 필요합니다.")
 
         ids = request.data.get("ids", [])
         next_status = request.data.get("status")
         reason = request.data.get("reason", "")
-        if next_status not in {Report.ExpenseStatus.APPROVED, Report.ExpenseStatus.REJECTED}:
-            raise ValidationError("status는 APPROVED 또는 REJECTED만 가능합니다.")
+        if next_status not in self.transition_rules:
+            raise ValidationError("지원하지 않는 경비지출 상태입니다.")
         if not isinstance(ids, list) or not ids:
             raise ValidationError("처리할 경비보고서를 선택해주세요.")
 
-        qs = Report.objects.filter(id__in=ids, report_type=Report.ReportType.EXPENSE_REPORT)
+        qs = self.related_queryset().filter(id__in=ids, report_type=Report.ReportType.EXPENSE_REPORT)
+        if role not in {"CEO", "SUPERUSER"}:
+            qs = qs.filter(Q(approver=request.user) | Q(recipients=request.user) | Q(recipient_records__recipient=request.user)).exclude(writer=request.user).distinct()
+        if qs.count() != len(set(ids)):
+            raise PermissionDenied("선택한 경비지출 중 처리 권한이 없는 항목이 있습니다.")
+        invalid = qs.exclude(status__in=self.transition_rules[next_status]).exists()
+        if invalid:
+            raise ValidationError("현재 상태에서 선택한 상태로 변경할 수 없는 항목이 있습니다.")
+
         now = timezone.now()
         update_fields = {"status": next_status}
         if next_status == Report.ExpenseStatus.APPROVED:
             update_fields["approved_at"] = now
-        else:
+        elif next_status == Report.ExpenseStatus.REJECTED:
             update_fields["rejected_at"] = now
             update_fields["rejected_reason"] = reason
+        elif next_status == Report.ExpenseStatus.SETTLED:
+            update_fields["confirmed_at"] = now
         updated = qs.update(**update_fields)
         return success_response({"updated_count": updated}, "경비지출 상태를 일괄 처리했습니다.")
 

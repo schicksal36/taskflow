@@ -16,6 +16,14 @@ class WorkRequestApiTests(APITestCase):
         self.second_assignee = User.objects.create_user("assignee2", "assignee2@example.com", "StrongPass123!")
 
     def test_create_complete_and_approve_work_request(self):
+        self.requester.first_name = "김정훈"
+        self.requester.department = "개발팀"
+        self.requester.position = "과장"
+        self.requester.save(update_fields=["first_name", "department", "position"])
+        self.assignee.first_name = "부평맛남"
+        self.assignee.department = "운영팀"
+        self.assignee.position = "대표이사"
+        self.assignee.save(update_fields=["first_name", "department", "position"])
         self.client.force_authenticate(self.requester)
         create_response = self.client.post(
             "/api/work-requests/",
@@ -30,7 +38,15 @@ class WorkRequestApiTests(APITestCase):
         )
         self.assertEqual(create_response.status_code, status.HTTP_201_CREATED)
         work = WorkRequest.objects.get(title="견적서 정리")
+        self.assertEqual(create_response.data["id"], work.id)
         self.assertEqual(work.status, WorkRequest.Status.PENDING)
+
+        list_response = self.client.get("/api/work-requests/")
+        self.assertEqual(list_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(list_response.data[0]["content"], "금요일까지 견적서를 정리해주세요.")
+        self.assertEqual(list_response.data[0]["requester_name"], "김정훈 (개발팀 / 과장)")
+        self.assertEqual(list_response.data[0]["assignee_name"], "부평맛남 (운영팀 / 대표이사)")
+        self.assertEqual(list_response.data[0]["assignee_names"], ["부평맛남 (운영팀 / 대표이사)"])
 
         self.client.force_authenticate(self.assignee)
         accept_response = self.client.patch(f"/api/work-requests/{work.id}/accept/", {}, format="json")
@@ -67,6 +83,38 @@ class WorkRequestApiTests(APITestCase):
         self.assertEqual(create_response.status_code, status.HTTP_201_CREATED)
         work = WorkRequest.objects.get(title="수기 담당자 업무")
         self.assertEqual(work.assignee, self.assignee)
+
+    def test_only_assignee_can_patch_work_request_status(self):
+        self.client.force_authenticate(self.requester)
+        create_response = self.client.post(
+            "/api/work-requests/",
+            {
+                "title": "상태 변경 권한",
+                "content": "담당자만 상태를 바꿀 수 있습니다.",
+                "assignee": self.assignee.id,
+                "priority": "NORMAL",
+            },
+            format="json",
+        )
+        self.assertEqual(create_response.status_code, status.HTTP_201_CREATED)
+        work = WorkRequest.objects.get(title="상태 변경 권한")
+
+        requester_response = self.client.patch(
+            f"/api/work-requests/{work.id}/status/",
+            {"status": WorkRequest.Status.IN_PROGRESS},
+            format="json",
+        )
+        self.assertEqual(requester_response.status_code, status.HTTP_403_FORBIDDEN)
+
+        self.client.force_authenticate(self.assignee)
+        assignee_response = self.client.patch(
+            f"/api/work-requests/{work.id}/status/",
+            {"status": WorkRequest.Status.IN_PROGRESS},
+            format="json",
+        )
+        self.assertEqual(assignee_response.status_code, status.HTTP_200_OK)
+        work.refresh_from_db()
+        self.assertEqual(work.status, WorkRequest.Status.IN_PROGRESS)
 
     def test_create_work_request_accepts_multiple_assignees(self):
         self.client.force_authenticate(self.requester)

@@ -155,6 +155,8 @@ class ScheduleListCreateView(ScheduleQuerysetMixin, generics.ListCreateAPIView):
     ordering_fields = ["start_at", "end_at", "created_at"]
 
     def get_queryset(self):
+        if self.request.method == "GET":
+            return Schedule.objects.all()
         return self.related_queryset()
 
     def get_serializer_class(self):

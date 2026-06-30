@@ -60,7 +60,19 @@ class TodoCreateUpdateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Todo
-        fields = ["title", "content", "status", "priority", "deadline_at", "remind_at"]
+        fields = [
+            "id",
+            "title",
+            "content",
+            "status",
+            "priority",
+            "deadline_at",
+            "remind_at",
+            "completed_at",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "completed_at", "created_at", "updated_at"]
 
     def create(self, validated_data):
         validated_data.setdefault("deadline_at", default_deadline_at())

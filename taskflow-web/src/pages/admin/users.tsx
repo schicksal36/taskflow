@@ -78,7 +78,7 @@ export default function AdminUsersPage() {
           <span>{isLoading ? "조회 중" : `${items.length}명`}</span>
         </div>
         <div className="table-wrap">
-          <table>
+          <table className="users-table">
             <thead>
               <tr>
                 <th>이름</th>

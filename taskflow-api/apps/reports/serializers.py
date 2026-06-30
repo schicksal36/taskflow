@@ -256,6 +256,17 @@ class ReportCreateUpdateSerializer(serializers.ModelSerializer):
             merged.append(recipient)
         return merged
 
+    def include_approver_recipient(self, recipients, approver):
+        """확인자만 전달된 예전/단순 요청도 수신자 기록으로 남기도록 합칩니다."""
+        merged = []
+        seen = set()
+        for recipient in [*recipients, approver]:
+            if not recipient or recipient.pk in seen:
+                continue
+            seen.add(recipient.pk)
+            merged.append(recipient)
+        return merged
+
     def validate_no_self_recipient(self, recipients, approver=None):
         """작성자가 자기 자신을 수신자/확인자로 지정하지 못하게 막습니다."""
         request = self.context.get("request")
@@ -272,6 +283,7 @@ class ReportCreateUpdateSerializer(serializers.ModelSerializer):
         recipients = validated_data.pop("recipients", [])
         recipient_inputs = validated_data.pop("recipient_inputs", [])
         recipients = self.merge_recipients(recipients, recipient_inputs)
+        recipients = self.include_approver_recipient(recipients, validated_data.get("approver"))
         self.validate_no_self_recipient(recipients, validated_data.get("approver"))
         report = Report.objects.create(writer=self.context["request"].user, **validated_data)
         if recipients:
@@ -292,11 +304,13 @@ class ReportCreateUpdateSerializer(serializers.ModelSerializer):
         validated_data.pop("expense_items", None)
         recipients = validated_data.pop("recipients", None)
         recipient_inputs = validated_data.pop("recipient_inputs", [])
+        approver_updated = "approver" in validated_data
         if recipients is not None or recipient_inputs:
             recipients = self.merge_recipients(recipients or [], recipient_inputs)
         self.validate_no_self_recipient(recipients or [], validated_data.get("approver", instance.approver))
         instance = super().update(instance, validated_data)
-        if recipients is not None:
+        if recipients is not None or approver_updated:
+            recipients = self.include_approver_recipient(recipients if recipients is not None else list(instance.recipients.all()), instance.approver)
             instance.recipients.set(recipients)
             instance.recipient_records.exclude(recipient__in=recipients).delete()
             for recipient in recipients:

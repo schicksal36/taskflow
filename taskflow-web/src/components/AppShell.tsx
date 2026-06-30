@@ -18,10 +18,9 @@ const navigation = [
   { href: "/dashboard", label: "대시보드" },
   { href: "/admin/users", label: "계정관리", roles: ["CEO", "ADMIN", "SUPERUSER"] },
   { href: "/tasks", label: "업무관리" },
-  { href: "/schedules", label: "일정관리" },
   { href: "/reports", label: "보고관리" },
+  { href: "/schedules", label: "일정관리" },
   { href: "/data-room", label: "자료실" },
-  { href: "/profile", label: "마이페이지" },
 ];
 
 const quickLinks = [

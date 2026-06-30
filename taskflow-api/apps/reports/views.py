@@ -119,6 +119,15 @@ class ReportQuerysetMixin:
         if not report.is_expense:
             raise ValidationError("경비지출 보고에서만 사용할 수 있는 기능입니다.")
 
+    def ensure_recipient_records(self, report):
+        """확인자/수신자 관계와 수신자별 상태 기록을 맞춥니다."""
+        recipients = list(report.recipients.all())
+        if report.approver and report.approver not in recipients:
+            recipients.append(report.approver)
+            report.recipients.add(report.approver)
+        for recipient in recipients:
+            ReportRecipient.objects.get_or_create(report=report, recipient=recipient)
+
     def recalculate_total(self, report):
         """경비 항목 합계를 다시 계산해 보고서 총액에 반영합니다.
 
@@ -274,8 +283,9 @@ class ReportDetailUpdateDeleteView(ReportQuerysetMixin, generics.RetrieveUpdateD
 
     def retrieve(self, request, *args, **kwargs):
         report = self.get_object()
+        self.ensure_recipient_records(report)
         record = report.recipient_records.filter(recipient=request.user).first()
-        if record and report.status == Report.ReportStatus.SUBMITTED and not record.is_read:
+        if record and not record.is_read:
             record.is_read = True
             record.read_at = timezone.now()
             record.save(update_fields=["is_read", "read_at"])

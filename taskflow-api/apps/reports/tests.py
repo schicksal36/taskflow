@@ -111,6 +111,52 @@ class ReportApiTests(APITestCase):
         self.assertTrue(ReportRecipient.objects.filter(report=report, recipient=self.approver).exists())
         self.assertEqual(report.approver, self.approver)
 
+    def test_create_report_with_approver_only_creates_recipient_record(self):
+        self.client.force_authenticate(self.writer)
+        create_response = self.client.post(
+            "/api/reports/",
+            {
+                "approver": self.approver.id,
+                "report_type": "EXPENSE_REPORT",
+                "title": "확인자만 있는 경비보고",
+                "content": "확인자를 수신자로 기록합니다.",
+                "report_date": timezone.localdate().isoformat(),
+                "expense_items": [
+                    {
+                        "expense_date": timezone.localdate().isoformat(),
+                        "category": "MEAL",
+                        "description": "점심",
+                        "amount": "15000",
+                        "payment_method": "CARD",
+                    }
+                ],
+            },
+            format="json",
+        )
+
+        self.assertEqual(create_response.status_code, status.HTTP_201_CREATED)
+        report = Report.objects.get(title="확인자만 있는 경비보고")
+        self.assertTrue(report.recipients.filter(pk=self.approver.pk).exists())
+        self.assertTrue(ReportRecipient.objects.filter(report=report, recipient=self.approver).exists())
+
+    def test_detail_repairs_missing_approver_recipient_record(self):
+        report = Report.objects.create(
+            writer=self.writer,
+            approver=self.approver,
+            report_type=Report.ReportType.EXPENSE_REPORT,
+            title="누락 수신자 복구",
+            content="과거 데이터 보정",
+            report_date=timezone.localdate(),
+            status=Report.ExpenseStatus.SUBMITTED,
+        )
+
+        self.client.force_authenticate(self.approver)
+        detail_response = self.client.get(f"/api/reports/{report.id}/")
+
+        self.assertEqual(detail_response.status_code, status.HTTP_200_OK)
+        self.assertTrue(ReportRecipient.objects.filter(report=report, recipient=self.approver).exists())
+        self.assertEqual(detail_response.data["data"]["recipients"][0]["recipient"], self.approver.id)
+
     def test_ceo_cannot_create_work_report(self):
         User = get_user_model()
         ceo = User.objects.create_user(

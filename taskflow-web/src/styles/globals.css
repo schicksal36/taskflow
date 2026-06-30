@@ -912,6 +912,11 @@ td {
   overflow-x: auto;
 }
 
+.users-table th,
+.users-table td {
+  text-align: center;
+}
+
 .status-pill {
   display: inline-flex;
   align-items: center;
@@ -954,7 +959,7 @@ td {
   min-width: 0;
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 8px 10px;
+  padding: 6px 8px;
   background: #f8fbff;
   color: var(--text);
   font-weight: 800;
@@ -983,10 +988,11 @@ td {
 
 .report-table th,
 .report-table td {
-  padding: 14px 12px;
-  line-height: 1.5;
+  padding: 12px 10px;
+  line-height: 1.45;
   letter-spacing: 0;
   word-break: keep-all;
+  text-align: center;
 }
 
 .report-table th {
@@ -995,6 +1001,7 @@ td {
 
 .report-table td:nth-child(1) {
   font-weight: 800;
+  text-align: center;
 }
 
 .table-title-button {
@@ -1005,7 +1012,7 @@ td {
   font: inherit;
   font-weight: 900;
   line-height: 1.45;
-  text-align: left;
+  text-align: center;
   word-break: keep-all;
   cursor: pointer;
 }
@@ -1149,8 +1156,8 @@ td {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 14px;
-  margin-bottom: 12px;
+  gap: 12px;
+  margin-bottom: 10px;
 }
 
 .report-section-head .table-title {
@@ -1172,7 +1179,7 @@ td {
   border-radius: 8px;
   background: #f8fbff;
   color: #13233f;
-  padding: 7px 10px;
+  padding: 6px 8px;
   font-size: 13px;
   font-weight: 900;
   white-space: nowrap;
@@ -1187,8 +1194,8 @@ td {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #f8fbff;
-  padding: 12px;
-  margin: 0 0 14px;
+  padding: 10px;
+  margin: 0 0 12px;
 }
 
 .manager-settlement-box .expense-settlement-summary {
@@ -2104,6 +2111,57 @@ td {
   line-height: 18px;
 }
 
+.expense-item-editor {
+  display: grid;
+  grid-template-columns: minmax(140px, 0.9fr) minmax(140px, 0.9fr) minmax(220px, 1.5fr) minmax(140px, 0.9fr) minmax(140px, 0.9fr);
+  gap: 12px;
+  align-items: end;
+}
+
+.expense-field {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.expense-field span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.expense-field input,
+.expense-field select {
+  width: 100%;
+  min-height: 42px;
+  background: #fff;
+}
+
+.expense-items-modal {
+  width: min(860px, 100%);
+}
+
+.expense-item-summary {
+  margin-top: 12px;
+}
+
+.expense-item-wrap {
+  margin-top: 0;
+}
+
+.expense-place-cell {
+  display: block;
+  color: #13233f;
+  font-weight: 900;
+  overflow-wrap: anywhere;
+}
+
+.money-cell {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-weight: 900;
+}
+
 .board-user-picker {
   margin-top: 10px;
 }
@@ -2505,6 +2563,14 @@ td {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .expense-item-editor {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .expense-item-editor .place-field {
+    grid-column: 1 / -1;
+  }
+
   .release-note-card {
     grid-template-columns: 1fr;
   }
@@ -2545,10 +2611,15 @@ td {
   .form-grid.two,
   .inline-entry,
   .list-filter-bar,
+  .expense-item-editor,
   .dashboard-grid,
   .stat-grid,
   .side-nav {
     grid-template-columns: 1fr;
+  }
+
+  .expense-item-editor .place-field {
+    grid-column: auto;
   }
 
   .topbar,

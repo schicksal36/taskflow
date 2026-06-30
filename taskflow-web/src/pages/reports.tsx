@@ -49,6 +49,26 @@ import { expenseCategoryLabels, labelOf, paymentMethodLabels, reportStatusLabels
 
 const visibleReportTypes = new Set(["DAILY_REPORT", "WORK_REPORT", "EXPENSE_REPORT"]);
 
+const bulkExpenseStatusLabels: Record<ExpenseWorkflowStatus, string> = {
+  APPROVED: "승인",
+  REJECTED: "반려",
+  SETTLING: "정산중",
+  SETTLED: "정산완료",
+};
+
+function nextExpenseStatuses(status: string): ExpenseWorkflowStatus[] {
+  if (status === "SUBMITTED") {
+    return ["APPROVED", "REJECTED"];
+  }
+  if (status === "APPROVED") {
+    return ["SETTLING"];
+  }
+  if (status === "SETTLING" || status === "REVIEWING") {
+    return ["SETTLED"];
+  }
+  return [];
+}
+
 const emptyForm: ReportInput = {
   report_type: "WORK_REPORT",
   title: "",
@@ -154,7 +174,7 @@ export default function ReportsPage() {
   const [selectedExpenseIds, setSelectedExpenseIds] = useState<number[]>([]);
   const [bulkExpenseStatus, setBulkExpenseStatus] = useState<ExpenseWorkflowStatus>("APPROVED");
   const [bulkRejectReason, setBulkRejectReason] = useState("");
-  const [managerView, setManagerView] = useState<"pending" | "expense" | "all">("pending");
+  const [managerView, setManagerView] = useState<"pending" | "all">("pending");
 
   const isExecutive = user?.role === "CEO" || user?.role === "SUPERUSER";
   const isManagerView = isExecutive || user?.role === "ADMIN";
@@ -180,6 +200,9 @@ export default function ReportsPage() {
           item.recipient_ids?.includes(user?.id ?? -1) ||
           item.recipients?.some((recipient) => recipient.recipient === user?.id),
       );
+  const managerExpenseReports = isManagerView
+    ? receivedReports.filter((item) => item.report_type === "EXPENSE_REPORT")
+    : [];
   const visibleReceivedReports = useMemo(() => {
     if (!isManagerView) {
       return receivedReports;
@@ -187,13 +210,32 @@ export default function ReportsPage() {
     if (managerView === "pending") {
       return receivedReports.filter((item) => item.status === "SUBMITTED");
     }
-    if (managerView === "expense") {
-      return receivedReports.filter((item) => item.report_type === "EXPENSE_REPORT" && !["DRAFT", "CANCELED", "REJECTED"].includes(item.status));
-    }
     return receivedReports;
   }, [isManagerView, managerView, receivedReports]);
-  const manageableExpenseReports = visibleReceivedReports.filter((item) => item.report_type === "EXPENSE_REPORT" && item.writer !== user?.id);
+  const visibleReportRows = isManagerView
+    ? visibleReceivedReports.filter((item) => item.report_type !== "EXPENSE_REPORT")
+    : visibleReceivedReports;
+  const visibleManagerExpenseReports = isManagerView
+    ? managerExpenseReports
+    : [];
+  const manageableExpenseReports = visibleManagerExpenseReports.filter((item) => item.writer !== user?.id && nextExpenseStatuses(item.status).length > 0);
+  const hasManageableExpenseReports = manageableExpenseReports.length > 0;
   const selectedManageableExpenseReports = manageableExpenseReports.filter((item) => selectedExpenseIds.includes(item.id));
+  const availableBulkExpenseStatuses = useMemo(() => {
+    if (!selectedManageableExpenseReports.length) {
+      return Object.keys(bulkExpenseStatusLabels) as ExpenseWorkflowStatus[];
+    }
+
+    return selectedManageableExpenseReports.reduce<ExpenseWorkflowStatus[]>((result, item, index) => {
+      const nextStatuses = nextExpenseStatuses(item.status);
+      if (index === 0) {
+        return nextStatuses;
+      }
+      return result.filter((status) => nextStatuses.includes(status));
+    }, []);
+  }, [selectedManageableExpenseReports]);
+  const canBulkUpdateExpense =
+    selectedManageableExpenseReports.length > 0 && availableBulkExpenseStatuses.includes(bulkExpenseStatus);
   const settlementSummary = useMemo(() => buildSettlementSummary(sentExpenseReports), [sentExpenseReports]);
   const managerSettlementSummary = useMemo(() => buildSettlementSummary(receivedReports), [receivedReports]);
   const managerSummary = useMemo(() => ({
@@ -203,6 +245,12 @@ export default function ReportsPage() {
     settlingExpenses: receivedReports.filter((item) => item.report_type === "EXPENSE_REPORT" && ["SETTLING", "REVIEWING"].includes(item.status)).length,
     settledExpenses: receivedReports.filter((item) => item.report_type === "EXPENSE_REPORT" && item.status === "SETTLED").length,
   }), [receivedReports]);
+
+  useEffect(() => {
+    if (availableBulkExpenseStatuses.length && !availableBulkExpenseStatuses.includes(bulkExpenseStatus)) {
+      setBulkExpenseStatus(availableBulkExpenseStatuses[0]);
+    }
+  }, [availableBulkExpenseStatuses, bulkExpenseStatus]);
 
   async function loadItems() {
     /**
@@ -298,7 +346,7 @@ export default function ReportsPage() {
     setIsEditorOpen(true);
   }
 
-  function startEdit(item: Report) {
+  function fillEditForm(item: Report) {
     setEditingId(item.id);
     setIsEditorOpen(true);
     setForm({
@@ -333,6 +381,24 @@ export default function ReportsPage() {
           payment_method: firstExpenseItem.payment_method,
         }
       : emptyExpenseItem);
+  }
+
+  async function startEdit(item: Report) {
+    if (!accessToken) {
+      fillEditForm(item);
+      return;
+    }
+
+    setIsDetailLoading(true);
+    setMessage("");
+    try {
+      fillEditForm(await fetchReport(accessToken, item.id));
+    } catch (error) {
+      setMessage(describeApiError(error));
+      fillEditForm(item);
+    } finally {
+      setIsDetailLoading(false);
+    }
   }
 
   async function handleRecipientSearch(value: string) {
@@ -598,7 +664,7 @@ export default function ReportsPage() {
       return <p className="report-detail-empty">등록된 경비지출 항목이 없습니다.</p>;
     }
     return (
-      <div className="table-wrap">
+      <div className="table-wrap expense-item-wrap">
         <table className="report-table expense-item-table">
           <thead>
             <tr>
@@ -614,8 +680,10 @@ export default function ReportsPage() {
               <tr key={expense.id}>
                 <td>{formatDate(expense.expense_date)}</td>
                 <td>{labelOf(expenseCategoryLabels, expense.category)}</td>
-                <td>{expense.description || "-"}</td>
-                <td>{formatMoney(expense.amount)}</td>
+                <td>
+                  <strong className="expense-place-cell">{expense.description || "-"}</strong>
+                </td>
+                <td className="money-cell">{formatMoney(expense.amount)}</td>
                 <td>{labelOf(paymentMethodLabels, expense.payment_method)}</td>
               </tr>
             ))}
@@ -781,6 +849,10 @@ export default function ReportsPage() {
 
   async function handleBulkExpenseStatus() {
     if (!accessToken || !selectedManageableExpenseReports.length) {
+      return;
+    }
+    if (!availableBulkExpenseStatuses.includes(bulkExpenseStatus)) {
+      setMessage("선택한 경비지출은 현재 상태에서 해당 처리로 변경할 수 없습니다.");
       return;
     }
     try {
@@ -971,14 +1043,11 @@ export default function ReportsPage() {
 
           <div className={`table-wrap${isExecutive ? "" : " stacked-table"}`}>
             <div className="report-section-head">
-              <h3 className="table-title">{isManagerView ? "관리자 작업대" : "받은 보고서"}</h3>
+              <h3 className="table-title">{isManagerView ? "보고서" : "받은 보고서"}</h3>
               {isManagerView && (
                 <div className="tab-row compact-tabs">
                   <button className={managerView === "pending" ? "active" : ""} onClick={() => setManagerView("pending")} type="button">
                     처리대기
-                  </button>
-                  <button className={managerView === "expense" ? "active" : ""} onClick={() => setManagerView("expense")} type="button">
-                    경비정산
                   </button>
                   <button className={managerView === "all" ? "active" : ""} onClick={() => setManagerView("all")} type="button">
                     전체
@@ -986,56 +1055,9 @@ export default function ReportsPage() {
                 </div>
               )}
             </div>
-            {isManagerView && (
-              <div className="manager-settlement-box">
-                <div className="expense-settlement-summary" aria-label="관리자 정산완료 금액">
-                  <span className="section-count">정산완료 {managerSummary.settledExpenses}건</span>
-                  <strong>이번 달 {formatMoney(managerSettlementSummary.currentMonthTotal)}</strong>
-                  <strong>전체 {formatMoney(managerSettlementSummary.total)}</strong>
-                </div>
-                {!!managerSettlementSummary.monthly.length && (
-                  <div className="expense-monthly-summary">
-                    {managerSettlementSummary.monthly.map((entry) => (
-                      <span key={`manager-${entry.month}`}>
-                        {monthLabelOf(entry.month)} {formatMoney(entry.amount)}
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-            {!!manageableExpenseReports.length && (
-              <div className="expense-bulk-bar">
-                <label className="check-label">
-                  <input
-                    checked={manageableExpenseReports.length > 0 && manageableExpenseReports.every((item) => selectedExpenseIds.includes(item.id))}
-                    onChange={toggleAllManageableExpenses}
-                    type="checkbox"
-                  />
-                  경비지출 전체 선택
-                </label>
-                <select onChange={(event) => setBulkExpenseStatus(event.target.value as ExpenseWorkflowStatus)} value={bulkExpenseStatus}>
-                  <option value="APPROVED">승인</option>
-                  <option value="REJECTED">반려</option>
-                  <option value="SETTLING">정산중</option>
-                  <option value="SETTLED">정산완료</option>
-                </select>
-                {bulkExpenseStatus === "REJECTED" && (
-                  <input
-                    onChange={(event) => setBulkRejectReason(event.target.value)}
-                    placeholder="반려 사유"
-                    value={bulkRejectReason}
-                  />
-                )}
-                <button className="primary-button" disabled={!selectedManageableExpenseReports.length} onClick={handleBulkExpenseStatus} type="button">
-                  선택 {selectedManageableExpenseReports.length}건 변경
-                </button>
-              </div>
-            )}
             <table className="report-table received-report-table">
               <thead>
                 <tr>
-                  <th>선택</th>
                   <th>제목</th>
                   <th>유형</th>
                   <th>첨부</th>
@@ -1047,20 +1069,10 @@ export default function ReportsPage() {
                 </tr>
               </thead>
               <tbody>
-                {visibleReceivedReports.map((item) => {
+                {visibleReportRows.map((item) => {
                   const myRecord = item.recipients?.find((recipient) => recipient.recipient === user?.id) ?? item.recipients?.[0];
-                  const canManageExpense = item.report_type === "EXPENSE_REPORT" && item.writer !== user?.id;
                   return (
                     <tr key={`received-${item.id}`}>
-                      <td>
-                        {canManageExpense ? (
-                          <input
-                            checked={selectedExpenseIds.includes(item.id)}
-                            onChange={() => toggleExpenseSelection(item.id)}
-                            type="checkbox"
-                          />
-                        ) : "-"}
-                      </td>
                       <td>
                         <button className="table-title-button" onClick={() => handleOpenReportDetail(item.id)} type="button">
                           {item.title}
@@ -1073,27 +1085,7 @@ export default function ReportsPage() {
                       <td>{formatDate(item.report_date)}</td>
                       <td>{myRecord?.is_read ? "읽음" : "안읽음"}</td>
                       <td className="table-actions">
-                        {item.report_type === "EXPENSE_REPORT" && item.status === "SUBMITTED" && (
-                          <>
-                            <button className="primary-button" onClick={() => handleApproveExpense(item.id)} type="button">
-                              승인
-                            </button>
-                            <button className="ghost-button" onClick={() => setReturnTarget(item)} type="button">
-                              반려
-                            </button>
-                          </>
-                        )}
-                        {item.report_type === "EXPENSE_REPORT" && item.status === "APPROVED" && (
-                          <button className="ghost-button" onClick={() => handleSettleExpense(item.id)} type="button">
-                            정산중
-                          </button>
-                        )}
-                        {item.report_type === "EXPENSE_REPORT" && ["SETTLING", "REVIEWING"].includes(item.status) && (
-                          <button className="primary-button" onClick={() => handleCompleteExpenseSettlement(item.id)} type="button">
-                            정산완료
-                          </button>
-                        )}
-                        {item.report_type !== "EXPENSE_REPORT" && item.status === "SUBMITTED" && (
+                        {item.status === "SUBMITTED" && (
                           <>
                             <button className="primary-button" onClick={() => handleConfirmReport(item.id)} type="button">
                               확인완료
@@ -1107,26 +1099,158 @@ export default function ReportsPage() {
                     </tr>
                   );
                 })}
-                {!visibleReceivedReports.length && (
+                {!visibleReportRows.length && (
                   <tr>
-                    <td colSpan={9}>{isManagerView ? "현재 탭에 표시할 보고서가 없습니다." : "받은 보고서가 없습니다."}</td>
+                    <td colSpan={8}>{isManagerView ? "현재 탭에 표시할 보고서가 없습니다." : "받은 보고서가 없습니다."}</td>
                   </tr>
                 )}
               </tbody>
             </table>
+            {isManagerView && (
+              <div className="table-wrap stacked-table">
+                <div className="report-section-head">
+                  <h3 className="table-title">경비 관련 내역</h3>
+                  <div className="expense-settlement-summary" aria-label="관리자 경비 관련 내역 요약">
+                    <span className="section-count">{visibleManagerExpenseReports.length}건</span>
+                    <strong>이번 달 {formatMoney(managerSettlementSummary.currentMonthTotal)}</strong>
+                    <strong>전체 {formatMoney(managerSettlementSummary.total)}</strong>
+                  </div>
+                </div>
+                {hasManageableExpenseReports && (
+                  <div className="expense-bulk-bar">
+                    <label className="check-label">
+                      <input
+                        checked={manageableExpenseReports.length > 0 && manageableExpenseReports.every((item) => selectedExpenseIds.includes(item.id))}
+                        onChange={toggleAllManageableExpenses}
+                        type="checkbox"
+                      />
+                      경비지출 전체 선택
+                    </label>
+                    <select
+                      disabled={!availableBulkExpenseStatuses.length}
+                      onChange={(event) => setBulkExpenseStatus(event.target.value as ExpenseWorkflowStatus)}
+                      value={availableBulkExpenseStatuses.includes(bulkExpenseStatus) ? bulkExpenseStatus : ""}
+                    >
+                      {availableBulkExpenseStatuses.length ? (
+                        availableBulkExpenseStatuses.map((status) => (
+                          <option key={status} value={status}>
+                            {bulkExpenseStatusLabels[status]}
+                          </option>
+                        ))
+                      ) : (
+                        <option value="">변경 가능 상태 없음</option>
+                      )}
+                    </select>
+                    {bulkExpenseStatus === "REJECTED" && (
+                      <input
+                        onChange={(event) => setBulkRejectReason(event.target.value)}
+                        placeholder="반려 사유"
+                        value={bulkRejectReason}
+                      />
+                    )}
+                    <button className="primary-button" disabled={!canBulkUpdateExpense} onClick={handleBulkExpenseStatus} type="button">
+                      선택 {selectedManageableExpenseReports.length}건 변경
+                    </button>
+                  </div>
+                )}
+                <table className="report-table expense-history-table">
+                  <thead>
+                    <tr>
+                      {hasManageableExpenseReports && <th>선택</th>}
+                      <th>제목</th>
+                      <th>지출처</th>
+                      <th>작성자</th>
+                      <th>보고일</th>
+                      <th>금액</th>
+                      <th>상태</th>
+                      <th>수신 상태</th>
+                      <th>항목</th>
+                      {hasManageableExpenseReports && <th>관리</th>}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visibleManagerExpenseReports.map((item) => {
+                      const canManageExpense = item.writer !== user?.id && nextExpenseStatuses(item.status).length > 0;
+                      return (
+                        <tr key={`manager-expense-${item.id}`}>
+                          {hasManageableExpenseReports && (
+                            <td>
+                              {canManageExpense ? (
+                                <input
+                                  checked={selectedExpenseIds.includes(item.id)}
+                                  onChange={() => toggleExpenseSelection(item.id)}
+                                  type="checkbox"
+                                />
+                              ) : "-"}
+                            </td>
+                          )}
+                          <td>
+                            <button className="table-title-button" onClick={() => handleOpenReportDetail(item.id)} type="button">
+                              {item.title}
+                            </button>
+                          </td>
+                          <td>{item.expense_place || "-"}</td>
+                          <td>{item.writer_name || "-"}</td>
+                          <td>{formatDate(item.report_date)}</td>
+                          <td>{formatMoney(item.total_amount)}</td>
+                          <td>{labelOf(reportStatusLabels, item.status)}</td>
+                          <td>{renderRecipientStatuses(item)}</td>
+                          <td className="table-actions">
+                            <button className="ghost-button" onClick={() => handleOpenExpenseDetail(item.id)} type="button">
+                              항목 보기
+                            </button>
+                          </td>
+                          {hasManageableExpenseReports && (
+                            <td className="table-actions">
+                              {item.status === "SUBMITTED" && (
+                                <>
+                                  <button className="primary-button" onClick={() => handleApproveExpense(item.id)} type="button">
+                                    승인
+                                  </button>
+                                  <button className="ghost-button" onClick={() => setReturnTarget(item)} type="button">
+                                    반려
+                                  </button>
+                                </>
+                              )}
+                              {item.status === "APPROVED" && (
+                                <button className="ghost-button" onClick={() => handleSettleExpense(item.id)} type="button">
+                                  정산중
+                                </button>
+                              )}
+                              {["SETTLING", "REVIEWING"].includes(item.status) && (
+                                <button className="primary-button" onClick={() => handleCompleteExpenseSettlement(item.id)} type="button">
+                                  정산완료
+                                </button>
+                              )}
+                            </td>
+                          )}
+                        </tr>
+                      );
+                    })}
+                    {!visibleManagerExpenseReports.length && (
+                      <tr>
+                        <td colSpan={hasManageableExpenseReports ? 10 : 8}>경비 관련 내역이 없습니다.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
 
           {!isExecutive && (
             <div className="table-wrap stacked-table">
               <div className="report-section-head">
                 <h3 className="table-title">경비지출 내역</h3>
-                <div className="expense-settlement-summary" aria-label="정산완료 기준 받을 금액">
-                  <span className="section-count">{sentExpenseReports.length}건</span>
-                  <strong>이번 달 {formatMoney(settlementSummary.currentMonthTotal)}</strong>
-                  <strong>전체 {formatMoney(settlementSummary.total)}</strong>
-                </div>
+                {isManagerView && (
+                  <div className="expense-settlement-summary" aria-label="정산완료 기준 받을 금액">
+                    <span className="section-count">{sentExpenseReports.length}건</span>
+                    <strong>이번 달 {formatMoney(settlementSummary.currentMonthTotal)}</strong>
+                    <strong>전체 {formatMoney(settlementSummary.total)}</strong>
+                  </div>
+                )}
               </div>
-              {!!settlementSummary.monthly.length && (
+              {isManagerView && !!settlementSummary.monthly.length && (
                 <div className="expense-monthly-summary">
                   {settlementSummary.monthly.map((entry) => (
                     <span key={entry.month}>
@@ -1276,34 +1400,30 @@ export default function ReportsPage() {
             {form.report_type === "EXPENSE_REPORT" && (
               <section className="report-detail-section">
                 <h3>경비 내역</h3>
-                <div className="report-detail-meta report-expense-meta">
-                  <label>
-                    <dt>사용일</dt>
-                    <dd><input onChange={(event) => setExpenseItem((current) => ({ ...current, expense_date: event.target.value }))} type="date" value={expenseItem.expense_date} /></dd>
+                <div className="expense-item-editor">
+                  <label className="expense-field date-field">
+                    <span>사용일</span>
+                    <input onChange={(event) => setExpenseItem((current) => ({ ...current, expense_date: event.target.value }))} type="date" value={expenseItem.expense_date} />
                   </label>
-                  <label>
-                    <dt>분류</dt>
-                    <dd>
-                      <select onChange={(event) => setExpenseItem((current) => ({ ...current, category: event.target.value }))} value={expenseItem.category}>
-                        {Object.entries(expenseCategoryLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                      </select>
-                    </dd>
+                  <label className="expense-field category-field">
+                    <span>분류</span>
+                    <select onChange={(event) => setExpenseItem((current) => ({ ...current, category: event.target.value }))} value={expenseItem.category}>
+                      {Object.entries(expenseCategoryLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                    </select>
                   </label>
-                  <label>
-                    <dt>지출처</dt>
-                    <dd><input onChange={(event) => setExpenseItem((current) => ({ ...current, description: event.target.value }))} value={expenseItem.description} /></dd>
+                  <label className="expense-field place-field">
+                    <span>지출처</span>
+                    <input onChange={(event) => setExpenseItem((current) => ({ ...current, description: event.target.value }))} value={expenseItem.description} />
                   </label>
-                  <label>
-                    <dt>금액</dt>
-                    <dd><input min="0" onChange={(event) => setExpenseItem((current) => ({ ...current, amount: event.target.value }))} type="number" value={expenseItem.amount} /></dd>
+                  <label className="expense-field amount-field">
+                    <span>금액</span>
+                    <input min="0" onChange={(event) => setExpenseItem((current) => ({ ...current, amount: event.target.value }))} type="number" value={expenseItem.amount} />
                   </label>
-                  <label>
-                    <dt>결제수단</dt>
-                    <dd>
-                      <select onChange={(event) => setExpenseItem((current) => ({ ...current, payment_method: event.target.value }))} value={expenseItem.payment_method}>
-                        {Object.entries(paymentMethodLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                      </select>
-                    </dd>
+                  <label className="expense-field method-field">
+                    <span>결제수단</span>
+                    <select onChange={(event) => setExpenseItem((current) => ({ ...current, payment_method: event.target.value }))} value={expenseItem.payment_method}>
+                      {Object.entries(paymentMethodLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                    </select>
                   </label>
                 </div>
               </section>
@@ -1414,7 +1534,7 @@ export default function ReportsPage() {
 
       {expenseDetailTarget && (
         <div className="modal-backdrop nested-modal-backdrop">
-          <div className="modal-panel report-detail-modal">
+          <div className="modal-panel report-detail-modal expense-items-modal">
             <div className="panel-head">
               <h2>경비지출 항목</h2>
               <button className="ghost-button" onClick={() => setExpenseDetailTarget(null)} type="button">
@@ -1425,6 +1545,20 @@ export default function ReportsPage() {
               <strong>{expenseDetailTarget.title}</strong>
               <span>{formatMoney(expenseDetailTarget.total_amount)}</span>
             </div>
+            <dl className="report-detail-meta expense-item-summary">
+              <div>
+                <dt>보고일</dt>
+                <dd>{formatDate(expenseDetailTarget.report_date)}</dd>
+              </div>
+              <div>
+                <dt>상태</dt>
+                <dd>{labelOf(reportStatusLabels, expenseDetailTarget.status)}</dd>
+              </div>
+              <div>
+                <dt>항목</dt>
+                <dd>{expenseDetailTarget.expense_items?.length ?? 0}건</dd>
+              </div>
+            </dl>
             <section className="report-detail-section">
               {renderExpenseItems(expenseDetailTarget)}
             </section>

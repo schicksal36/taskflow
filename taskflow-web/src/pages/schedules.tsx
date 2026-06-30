@@ -46,6 +46,7 @@ const emptyForm: ScheduleInput = {
 type ScheduleViewMode = "year" | "month" | "week" | "day";
 
 const weekDayLabels = ["일", "월", "화", "수", "목", "금", "토"];
+const scheduleTodoKeywords = ["출장", "휴가", "연차", "반차", "외근", "교육", "미팅", "회의"];
 
 function formatDateInput(date: Date) {
   const year = date.getFullYear();
@@ -110,6 +111,11 @@ function schedulesForDate(items: Schedule[], date: Date) {
 function todosForDate(items: Todo[], date: Date) {
   const target = formatDateInput(date);
   return items.filter((item) => item.deadline_at && formatDateInput(new Date(item.deadline_at)) === target);
+}
+
+function isScheduleTodo(item: Todo) {
+  const value = `${item.title} ${item.content ?? ""}`;
+  return scheduleTodoKeywords.some((keyword) => value.includes(keyword));
 }
 
 function dDayLabel(value?: string | null) {
@@ -236,6 +242,8 @@ export default function SchedulesPage() {
   }, [selectedDate]);
   const selectedDateSchedules = useMemo(() => schedulesForDate(items, selectedDate), [items, selectedDate]);
   const selectedDateTodos = useMemo(() => todosForDate(todos, selectedDate), [todos, selectedDate]);
+  const selectedDateScheduleTodos = useMemo(() => selectedDateTodos.filter(isScheduleTodo), [selectedDateTodos]);
+  const selectedDateChecklistTodos = useMemo(() => selectedDateTodos.filter((todo) => !isScheduleTodo(todo)), [selectedDateTodos]);
   const myScheduleItems = useMemo(() => items.filter((item) => item.owner === user?.id), [items, user?.id]);
 
   function canManageSchedule(item: Schedule) {
@@ -514,10 +522,11 @@ export default function SchedulesPage() {
                   {Array.from({ length: 12 }, (_, month) => {
                     const monthDate = new Date(calendarMonth.getFullYear(), month, 1);
                     const monthItems = items.filter((item) => new Date(item.start_at).getMonth() === month && new Date(item.start_at).getFullYear() === calendarMonth.getFullYear());
+                    const monthScheduleTodos = todos.filter((todo) => todo.deadline_at && isScheduleTodo(todo) && new Date(todo.deadline_at).getMonth() === month && new Date(todo.deadline_at).getFullYear() === calendarMonth.getFullYear());
                     return (
                       <button className="year-month" key={month} onClick={() => setCalendarMonth(monthDate)} type="button">
                         <strong>{month + 1}월</strong>
-                        <span>{monthItems.length}건</span>
+                        <span>{monthItems.length + monthScheduleTodos.length}건</span>
                       </button>
                     );
                   })}
@@ -533,6 +542,8 @@ export default function SchedulesPage() {
                     {(viewMode === "week" ? weekDays : viewMode === "day" ? [selectedDate] : calendarDays).map((date, index) => {
                       const daySchedules = date ? schedulesForDate(items, date) : [];
                       const dayTodos = date ? todosForDate(todos, date) : [];
+                      const dayScheduleTodos = dayTodos.filter(isScheduleTodo);
+                      const dayChecklistTodos = dayTodos.filter((todo) => !isScheduleTodo(todo));
                       const isToday = date ? formatDateInput(date) === formatDateInput(new Date()) : false;
                       const isSelected = date ? formatDateInput(date) === formatDateInput(selectedDate) : false;
 
@@ -572,7 +583,12 @@ export default function SchedulesPage() {
                                     {viewMode === "day" && item.is_shared ? "공유 " : ""}{item.title}
                                   </button>
                                 ))}
-                                {dayTodos.map((todo) => (
+                                {dayScheduleTodos.map((todo) => (
+                                  <button className="calendar-event schedule-todo-event" key={`schedule-todo-${todo.id}`} type="button">
+                                    {dDayLabel(todo.deadline_at)} {todo.title}
+                                  </button>
+                                ))}
+                                {dayChecklistTodos.map((todo) => (
                                   <button className="calendar-event todo-event" key={`todo-${todo.id}`} type="button">
                                     {dDayLabel(todo.deadline_at)} {todo.title}
                                   </button>
@@ -790,7 +806,7 @@ export default function SchedulesPage() {
 
             <section className="report-detail-section">
               <h3>일정</h3>
-              {selectedDateSchedules.length ? (
+              {selectedDateSchedules.length || selectedDateScheduleTodos.length ? (
                 <div className="schedule-detail-list">
                   {selectedDateSchedules.map((item) => (
                     <button
@@ -810,6 +826,13 @@ export default function SchedulesPage() {
                       {item.location && <small>{item.location}</small>}
                     </button>
                   ))}
+                  {selectedDateScheduleTodos.map((todo) => (
+                    <button className="schedule-todo-detail" key={`schedule-todo-detail-${todo.id}`} type="button">
+                      <strong>{todo.title}</strong>
+                      <span>체크리스트 일정 · {formatDateTime(todo.deadline_at)}</span>
+                      <small>{dDayLabel(todo.deadline_at)}</small>
+                    </button>
+                  ))}
                 </div>
               ) : (
                 <p className="report-detail-empty">등록된 일정이 없습니다.</p>
@@ -818,9 +841,9 @@ export default function SchedulesPage() {
 
             <section className="report-detail-section">
               <h3>체크리스트 마감</h3>
-              {selectedDateTodos.length ? (
+              {selectedDateChecklistTodos.length ? (
                 <div className="checklist-detail-list">
-                  {selectedDateTodos.map((todo) => (
+                  {selectedDateChecklistTodos.map((todo) => (
                     <label key={todo.id}>
                       <input checked={todo.status === "DONE"} readOnly type="checkbox" />
                       <span>{dDayLabel(todo.deadline_at)} {todo.title}</span>

@@ -1119,6 +1119,17 @@ td {
   padding-inline: 12px;
 }
 
+.tasks-table th:nth-child(5),
+.tasks-table td:nth-child(5) {
+  text-align: center;
+  width: 104px;
+}
+
+.tasks-table .status-action {
+  justify-content: center;
+  flex-wrap: nowrap;
+}
+
 .table-title {
   margin: 8px 0 12px;
   color: #13233f;
@@ -1866,6 +1877,11 @@ td {
   background: #fffbeb;
 }
 
+.calendar-event.schedule-todo-event {
+  border-left-color: #16a34a;
+  background: #ecfdf5;
+}
+
 .calendar-event.shared-event {
   border-style: dashed;
   background: #f4f8ff;
@@ -1942,7 +1958,6 @@ td {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 92px;
   min-height: 34px;
   border: 1px solid #cfe0ff;
   border-radius: 8px;
@@ -1955,8 +1970,13 @@ td {
   white-space: nowrap;
 }
 
+.task-status-box {
+  min-width: 58px;
+}
+
 .task-status-select {
   appearance: none;
+  width: 92px;
   background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
   background-position: calc(100% - 15px) 13px, calc(100% - 10px) 13px;
   background-repeat: no-repeat;
@@ -2255,6 +2275,12 @@ td {
   padding: 16px;
 }
 
+.release-detail-note + .release-detail-note {
+  margin-top: 16px;
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+
 .release-detail > span {
   display: inline-flex;
   margin-bottom: 8px;
@@ -2286,7 +2312,42 @@ td {
 
 .release-notes-list {
   display: grid;
-  gap: 14px;
+  gap: 18px;
+}
+
+.release-note-date-group {
+  display: grid;
+  gap: 12px;
+}
+
+.release-note-date-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 10px;
+}
+
+.release-note-date-head h3 {
+  margin: 0;
+  color: #13233f;
+  font-size: 20px;
+}
+
+.release-note-date-head span {
+  display: inline-flex;
+  border-radius: 8px;
+  background: #eaf2ff;
+  color: var(--blue);
+  padding: 5px 8px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.release-note-group-items {
+  display: grid;
+  gap: 12px;
 }
 
 .release-note-card {
@@ -2299,18 +2360,7 @@ td {
   padding: 18px;
 }
 
-.release-note-card span {
-  display: inline-flex;
-  margin-bottom: 10px;
-  border-radius: 8px;
-  background: #eaf2ff;
-  color: var(--blue);
-  padding: 5px 8px;
-  font-size: 12px;
-  font-weight: 900;
-}
-
-.release-note-card h3 {
+.release-note-card h4 {
   margin: 0 0 8px;
   color: #13233f;
   font-size: 18px;
@@ -2410,6 +2460,11 @@ td {
 .schedule-detail-list button:hover,
 .schedule-detail-list button:focus-visible {
   background: #eef5ff;
+}
+
+.schedule-detail-list .schedule-todo-detail {
+  border-left-color: #16a34a;
+  background: #ecfdf5;
 }
 
 .schedule-detail-list strong {
@@ -2512,6 +2567,59 @@ td {
 
   .dashboard-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .list-filter-bar,
+  .manager-report-filter,
+  .board-filter-bar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .list-filter-bar .search-field,
+  .board-filter-bar .search-field {
+    grid-column: 1 / -1;
+  }
+
+  .list-filter-bar .table-actions,
+  .manager-report-filter .table-actions,
+  .board-filter-bar .table-actions {
+    justify-content: flex-end;
+  }
+
+  .report-table,
+  .sent-report-table,
+  .received-report-table,
+  .expense-history-table,
+  .tasks-table {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .report-table th,
+  .report-table td {
+    padding: 10px 8px;
+    font-size: 13px;
+    word-break: keep-all;
+    overflow-wrap: anywhere;
+  }
+
+  .sent-report-table th:last-child,
+  .sent-report-table td:last-child,
+  .received-report-table th:last-child,
+  .received-report-table td:last-child {
+    width: auto;
+  }
+
+  .report-table .table-actions,
+  .tasks-table .table-actions {
+    min-width: 0;
+    padding-right: 0;
+    flex-wrap: wrap;
+  }
+
+  .report-table .recipient-status-list,
+  .report-table .attachment-list {
+    min-width: 0;
   }
 }
 
@@ -2706,6 +2814,14 @@ td {
   .tasks-table .table-actions,
   .tasks-table .table-actions > * {
     flex: 0 0 auto;
+  }
+
+  .report-table,
+  .sent-report-table,
+  .received-report-table,
+  .expense-history-table,
+  .tasks-table {
+    min-width: 680px;
   }
 
   .guide-section-list,

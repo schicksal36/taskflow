@@ -126,6 +126,7 @@ function buildSettlementSummary(reports: Report[]) {
   return {
     currentMonth,
     currentMonthTotal: monthlyMap[currentMonth] ?? 0,
+    settledCount: settledReports.length,
     total: settledReports.reduce((sum, item) => sum + amountOf(item.total_amount), 0),
     monthly: Object.entries(monthlyMap)
       .sort(([left], [right]) => right.localeCompare(left))
@@ -1109,8 +1110,8 @@ export default function ReportsPage() {
             {isManagerView && (
               <div className="table-wrap stacked-table">
                 <div className="report-section-head">
-                  <h3 className="table-title">경비 관련 내역</h3>
-                  <div className="expense-settlement-summary" aria-label="관리자 경비 관련 내역 요약">
+                  <h3 className="table-title">경비 내역</h3>
+                  <div className="expense-settlement-summary" aria-label="관리자 경비 내역 요약">
                     <span className="section-count">{visibleManagerExpenseReports.length}건</span>
                     <strong>이번 달 {formatMoney(managerSettlementSummary.currentMonthTotal)}</strong>
                     <strong>전체 {formatMoney(managerSettlementSummary.total)}</strong>
@@ -1229,7 +1230,7 @@ export default function ReportsPage() {
                     })}
                     {!visibleManagerExpenseReports.length && (
                       <tr>
-                        <td colSpan={hasManageableExpenseReports ? 10 : 8}>경비 관련 내역이 없습니다.</td>
+                        <td colSpan={hasManageableExpenseReports ? 10 : 8}>경비 내역이 없습니다.</td>
                       </tr>
                     )}
                   </tbody>
@@ -1242,15 +1243,13 @@ export default function ReportsPage() {
             <div className="table-wrap stacked-table">
               <div className="report-section-head">
                 <h3 className="table-title">경비지출 내역</h3>
-                {isManagerView && (
-                  <div className="expense-settlement-summary" aria-label="정산완료 기준 받을 금액">
-                    <span className="section-count">{sentExpenseReports.length}건</span>
-                    <strong>이번 달 {formatMoney(settlementSummary.currentMonthTotal)}</strong>
-                    <strong>전체 {formatMoney(settlementSummary.total)}</strong>
-                  </div>
-                )}
+                <div className="expense-settlement-summary" aria-label="정산완료 기준 받을 금액">
+                  <span className="section-count">정산완료 {settlementSummary.settledCount}건</span>
+                  <strong>이번 달 {formatMoney(settlementSummary.currentMonthTotal)}</strong>
+                  <strong>전체 {formatMoney(settlementSummary.total)}</strong>
+                </div>
               </div>
-              {isManagerView && !!settlementSummary.monthly.length && (
+              {!!settlementSummary.monthly.length && (
                 <div className="expense-monthly-summary">
                   {settlementSummary.monthly.map((entry) => (
                     <span key={entry.month}>

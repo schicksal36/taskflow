@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Logo } from "@/components/Logo";
 import { useAuth } from "@/contexts/AuthContext";
 import { fetchNotificationCount } from "@/lib/api";
-import { releaseNotes } from "@/lib/releaseNotes";
+import { groupReleaseNotesByDate, releaseNotes } from "@/lib/releaseNotes";
 
 type AppShellProps = {
   title: string;
@@ -82,8 +82,8 @@ export function AppShell({ title, description, children, actions }: AppShellProp
   const [guideTab, setGuideTab] = useState<"manual" | "release">("manual");
   const [selectedReleaseIndex, setSelectedReleaseIndex] = useState(0);
   const isSuperuser = user?.role === "SUPERUSER";
-  const recentReleaseNotes = releaseNotes.slice(0, 3);
-  const selectedReleaseNote = recentReleaseNotes[selectedReleaseIndex] ?? recentReleaseNotes[0];
+  const recentReleaseNoteGroups = groupReleaseNotesByDate(releaseNotes).slice(0, 3);
+  const selectedReleaseNoteGroup = recentReleaseNoteGroups[selectedReleaseIndex] ?? recentReleaseNoteGroups[0];
 
   useEffect(() => {
     if (isReady && !accessToken) {
@@ -270,21 +270,25 @@ export function AppShell({ title, description, children, actions }: AppShellProp
               <>
                 <div className="release-layout">
                   <div className="release-list">
-                    {recentReleaseNotes.map((note, index) => (
-                      <button className={selectedReleaseIndex === index ? "active" : ""} key={`${note.date}-${note.title}`} onClick={() => setSelectedReleaseIndex(index)} type="button">
-                        <strong>{note.date}</strong>
-                        <span>{note.title}</span>
-                        <small>{note.summary}</small>
+                    {recentReleaseNoteGroups.map((group, index) => (
+                      <button className={selectedReleaseIndex === index ? "active" : ""} key={group.date} onClick={() => setSelectedReleaseIndex(index)} type="button">
+                        <strong>{group.date}</strong>
+                        <span>{group.notes.length}건</span>
+                        <small>{group.notes.map((note) => note.title).join(", ")}</small>
                       </button>
                     ))}
                   </div>
                   <section className="release-detail">
-                    <span>{selectedReleaseNote.date}</span>
-                    <h3>{selectedReleaseNote.title}</h3>
-                    <p>{selectedReleaseNote.summary}</p>
-                    <ul>
-                      {selectedReleaseNote.details.map((detail) => <li key={detail}>{detail}</li>)}
-                    </ul>
+                    <span>{selectedReleaseNoteGroup.date}</span>
+                    {selectedReleaseNoteGroup.notes.map((note) => (
+                      <article className="release-detail-note" key={`${note.date}-${note.title}`}>
+                        <h3>{note.title}</h3>
+                        <p>{note.summary}</p>
+                        <ul>
+                          {note.details.map((detail) => <li key={detail}>{detail}</li>)}
+                        </ul>
+                      </article>
+                    ))}
                   </section>
                 </div>
                 <div className="guide-modal-actions">

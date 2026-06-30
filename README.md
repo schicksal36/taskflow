@@ -1,6 +1,6 @@
 # TaskFlow
 
-TaskFlow는 사내 업무요청, 할 일, 일정관리, 업무보고, 경비지출, 게시판, 자료실, 알림, 파일 업로드를 제공하는 업무관리 시스템입니다.
+TaskFlow는 사내 업무관리, 일정관리, 보고관리, 경비지출, 공지사항, 자료실, 알림, 파일 업로드를 제공하는 업무관리 시스템입니다.
 
 - Backend: `taskflow-api` Django REST API
 - Frontend: `taskflow-web` Next.js 웹앱
@@ -58,12 +58,12 @@ apps/{app_name}/
 ```text
 taskflow-web/
 ├── package.json
-├── next.config.mjs
+├── next.config.js
 ├── tsconfig.json
 ├── public/
 ├── src/
 │   ├── components/
-│   │   ├── AppShell.tsx  # 공통 레이아웃, 사이드바, 권한별 메뉴
+│   │   ├── AppShell.tsx  # 공통 레이아웃, 사이드바, 사용설명서, 권한별 메뉴
 │   │   └── Logo.tsx
 │   ├── contexts/
 │   │   └── AuthContext.tsx  # 로그인 상태, 토큰 저장/갱신
@@ -71,13 +71,17 @@ taskflow-web/
 │   │   ├── api.ts       # 백엔드 API 호출, 업로드, 다운로드
 │   │   ├── format.ts    # 날짜/금액 포맷
 │   │   ├── labels.ts    # 상태/구분 라벨
+│   │   ├── releaseNotes.ts # 릴리즈노트 데이터
 │   │   └── webauthn.ts  # 생체인식 브라우저 처리
 │   ├── pages/
 │   │   ├── _app.tsx
+│   │   ├── _document.tsx
 │   │   ├── index.tsx
 │   │   ├── login.tsx
 │   │   ├── register.tsx
+│   │   ├── reset-password.tsx
 │   │   ├── dashboard.tsx
+│   │   ├── tasks.tsx
 │   │   ├── work-requests.tsx
 │   │   ├── todos.tsx
 │   │   ├── schedules.tsx
@@ -87,6 +91,7 @@ taskflow-web/
 │   │   ├── data-room.tsx
 │   │   ├── notifications.tsx
 │   │   ├── profile.tsx
+│   │   ├── release-notes.tsx
 │   │   └── admin/
 │   │       └── users.tsx
 │   └── styles/
@@ -233,6 +238,7 @@ DB_HOST=127.0.0.1
 DB_PORT=5432
 
 REDIS_URL=redis://127.0.0.1:6379/0
+MEDIA_URL=/media/
 FRONTEND_URL=http://localhost:3000
 CORS_ALLOWED_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
 CSRF_TRUSTED_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
@@ -297,11 +303,16 @@ npm run start
 | --- | --- |
 | `src/lib/api.ts` | 백엔드 API 호출, 업로드, 다운로드, 오류 처리 |
 | `src/contexts/AuthContext.tsx` | 로그인 상태, 토큰 저장/갱신 |
-| `src/components/AppShell.tsx` | 공통 레이아웃, 사이드바, Quick Menu, 권한별 메뉴 |
-| `src/pages/work-requests.tsx` | 업무요청 등록/목록, 다중 담당자, 첨부 zip 처리 |
-| `src/pages/schedules.tsx` | 일정관리, 오른쪽 일정 추가 패널, Google Calendar 구독 접기/펼치기 |
-| `src/pages/reports.tsx` | 업무보고 작성/목록, 수신자 통합 입력, 파일 첨부 |
-| `src/pages/expenses.tsx` | 경비지출 작성/검토 |
+| `src/components/AppShell.tsx` | 공통 레이아웃, 사이드바, Quick Menu, 사용설명서, 권한별 메뉴 |
+| `src/pages/tasks.tsx` | 업무요청과 체크리스트를 통합한 업무관리 화면 |
+| `src/pages/work-requests.tsx` | 업무요청 단독 화면 |
+| `src/pages/todos.tsx` | 내 할 일 단독 화면 |
+| `src/pages/schedules.tsx` | 일정관리, 캘린더 보기, 일정 등록/수정, Google Calendar 구독 |
+| `src/pages/reports.tsx` | 보고관리, 업무보고/경비지출 작성, 관리자 처리 |
+| `src/pages/expenses.tsx` | 경비지출 작성/검토 단독 화면 |
+| `src/pages/boards.tsx` | 공지사항 등록/목록 |
+| `src/pages/data-room.tsx` | 자료실 등록/목록 |
+| `src/pages/release-notes.tsx` | 릴리즈노트 전체 내역 |
 | `src/pages/admin/users.tsx` | 계정관리 |
 | `src/styles/globals.css` | 공통 UI, 카드/테이블/폼/반응형 스타일 |
 
@@ -324,7 +335,7 @@ npm run build
 
 | 권한 | 설명 |
 | --- | --- |
-| `USER` | 일반 사용자, 업무요청/일정/보고/게시판 사용 |
+| `USER` | 일반 사용자, 업무관리/일정/보고/공지사항/자료실 사용 |
 | `ADMIN` | 관리자, 일반 업무 기능과 일부 관리 기능 사용 |
 | `CEO` | 대표이사, 보고서 작성은 비활성화하고 받은 보고서 확인 중심 |
 | `SUPERUSER` | 계정관리 전용, 프론트에서는 계정관리 화면만 노출 |
@@ -333,44 +344,52 @@ npm run build
 
 ## 대표 기능
 
-### 업무요청
+### 업무관리
 
-- 업무요청 등록/수정/삭제
-- 담당자 카드 선택과 수기 입력 통합
-- 담당자 여러 명 선택 가능
-- 마감일 선택사항
-- 요청 내용 하단 파일 첨부
-- 파일 여러 개 선택 시 프론트에서 zip으로 통합 업로드
+- 업무요청과 체크리스트 통합 목록
+- 업무 등록 버튼으로 업무요청 또는 체크리스트 등록
+- 받은 요청, 보낸 요청, 체크리스트, 진행중, 완료 탭 제공
+- 제목 클릭 시 상세 내용 확인
+- 담당자 이름, 부서, 직함 표시
+- 업무 상태 변경과 완료 처리
 
 ### 일정관리
 
-- 공유 일정 달력
+- 전체 사용자 일정이 보이는 공유 일정 달력
 - 년/월/주/일 보기
-- 오른쪽 일정 추가/수정 패널
+- 하단 목록에는 내가 등록한 일정 표시
+- 날짜 더블클릭으로 새 일정 등록
 - 시작일 필수, 종료일 선택사항
-- 구분 자유 입력
+- 종일/기간 일정과 24시간 직접 입력 방식 지원
 - Google Calendar 구독 URL 접기/펼치기
 
-### 업무보고
+### 보고관리
 
 - 업무보고 작성/수정/제출/재제출
+- 경비지출 보고 작성
 - 수신자 카드 검색과 수기 입력 통합
 - 수신자별 읽음/확인완료/보완요청 상태 표시
 - 내용 아래 파일 첨부
 - 보낸 보고서/받은 보고서 분리
+- 보고서 상세에서 연결된 경비지출 항목 확인
+- 관리자와 대표이사는 처리대기, 경비 승인대기, 정산중 현황 확인
+- 관리자와 대표이사는 부서별, 작성자별 필터로 보고서와 경비지출 조회
 - 대표이사는 작성/보낸 보고서 UI 숨김, 받은 보고서 중심
 
 ### 경비지출
 
-- 경비보고 작성
+- 경비지출 보고 작성
 - 경비 항목 등록
 - 영수증 첨부
-- 승인/반려/집계
+- 승인/반려 후 정산중, 정산완료 처리
+- 여러 경비지출 건 일괄 상태 변경
+- 이번 달, 전체, 월별 받을 금액/정산금액 요약
 - PDF/Excel 생성 API 기반
 
-### 게시판/자료실/알림
+### 공지사항/자료실/알림
 
-- 게시글/공지/자료실
+- 공지사항 등록과 대시보드 공지사항 패널
+- 자료실 게시글 등록과 권한별 공개 설정
 - 댓글, 좋아요, 첨부파일
 - 알림 목록, 읽음 처리, SSE 실시간 알림
 
@@ -388,7 +407,9 @@ npm run build
 | 업무보고 | `GET/POST /api/reports/` |
 | 보고서 첨부 | `GET/POST /api/reports/{id}/files/` |
 | 경비지출 | `GET /api/reports/expenses/` |
-| 게시판 | `GET/POST /api/boards/posts/` |
+| 경비지출 요약 | `GET /api/reports/expenses/summary/` |
+| 경비지출 일괄 상태 변경 | `POST /api/reports/expenses/bulk-status/` |
+| 공지사항/자료실 | `GET/POST /api/boards/posts/` |
 | 알림 | `GET /api/notifications/` |
 | 파일 업로드 | `POST /api/media/files/` |
 

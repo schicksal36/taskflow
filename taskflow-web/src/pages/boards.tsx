@@ -19,13 +19,13 @@ import {
 import { formatDateTime } from "@/lib/format";
 import { boardTypeLabels, labelOf } from "@/lib/labels";
 
-const boardOptions = ["FREE", "NOTICE"];
+const boardOptions = ["NOTICE"];
 
 export const emptyForm: BoardPostInput = {
-  board_type: "FREE",
+  board_type: "NOTICE",
   title: "",
   content: "",
-  is_notice: false,
+  is_notice: true,
   is_pinned: false,
   permission: "PUBLIC",
   specific_user_ids: [],
@@ -41,10 +41,10 @@ type BoardsPageContentProps = {
 };
 
 export function BoardsPageContent({
-  title = "게시판",
-  description = "게시글 API로 사내 게시글을 등록하고 관리합니다.",
-  listTitle = "게시글 목록",
-  emptyMessage = "조회된 게시글이 없습니다.",
+  title = "공지사항",
+  description = "공지사항을 등록하고 전사 공유 내용을 관리합니다.",
+  listTitle = "공지사항 목록",
+  emptyMessage = "등록된 공지사항이 없습니다.",
   allowedTypes = boardOptions,
   fixedBoardType,
 }: BoardsPageContentProps) {
@@ -57,11 +57,13 @@ export function BoardsPageContent({
   const [userSearch, setUserSearch] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [searchInput, setSearchInput] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
+  const [boardTypeFilter, setBoardTypeFilter] = useState("");
 
   async function loadItems() {
     if (!accessToken) {
@@ -72,8 +74,9 @@ export function BoardsPageContent({
     setMessage("");
 
     try {
+      const targetTypes = boardTypeFilter ? [boardTypeFilter] : allowedTypes;
       const responses = await Promise.all(
-        allowedTypes.map((boardType) => fetchBoardPosts(accessToken, boardType, searchTerm)),
+        targetTypes.map((boardType) => fetchBoardPosts(accessToken, boardType, searchTerm)),
       );
       setItems(responses.flatMap((response) => toArray(response)));
     } catch (error) {
@@ -87,7 +90,7 @@ export function BoardsPageContent({
     loadItems();
     // loadItems는 저장/삭제 후에도 재사용하는 함수라 effect 의존성만 고정합니다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [accessToken, searchTerm]);
+  }, [accessToken, searchTerm, boardTypeFilter]);
 
   useEffect(() => {
     async function loadUsers() {
@@ -108,10 +111,26 @@ export function BoardsPageContent({
     setForm({ ...emptyForm, board_type: fixedBoardType ?? emptyForm.board_type });
     setSpecificUserIds([]);
     setFiles([]);
+    setUserSearch("");
+    setIsEditorOpen(false);
+  }
+
+  function openCreateForm() {
+    if (isEditorOpen) {
+      resetForm();
+      return;
+    }
+    setEditingId(null);
+    setForm({ ...emptyForm, board_type: fixedBoardType ?? emptyForm.board_type });
+    setSpecificUserIds([]);
+    setFiles([]);
+    setUserSearch("");
+    setIsEditorOpen(true);
   }
 
   function startEdit(item: BoardPost) {
     setEditingId(item.id);
+    setIsEditorOpen(true);
     setForm({
       board_type: fixedBoardType ?? item.board_type,
       title: item.title,
@@ -162,6 +181,7 @@ export function BoardsPageContent({
   function clearSearch() {
     setSearchInput("");
     setSearchTerm("");
+    setBoardTypeFilter("");
   }
 
   async function handleDelete(id: number) {
@@ -188,121 +208,19 @@ export function BoardsPageContent({
     }
     return [item.display_name, item.email, item.department].filter(Boolean).some((value) => String(value).toLowerCase().includes(keyword));
   });
+  const canFilterBoardType = !fixedBoardType && allowedTypes.length > 1;
 
   return (
     <AppShell title={title} description={description}>
       {message && <p className="notice error">{message}</p>}
 
-      <section className="editor-layout">
-        <form className="panel form-stack" onSubmit={handleSubmit}>
-          <div className="panel-head">
-            <h2>{editingId ? "게시글 수정" : "게시글 등록"}</h2>
-            {editingId && (
-              <button className="ghost-button" onClick={resetForm} type="button">
-                취소
-              </button>
-            )}
-          </div>
-
-          {!fixedBoardType && (
-            <label>
-              <span>게시판</span>
-              <select
-                onChange={(event) => setForm((current) => ({ ...current, board_type: event.target.value }))}
-                value={form.board_type}
-              >
-                {allowedTypes.map((value) => (
-                  <option key={value} value={value}>
-                    {labelOf(boardTypeLabels, value)}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-
-          <label>
-            <span>제목</span>
-            <input
-              onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))}
-              required
-              value={form.title}
-            />
-          </label>
-
-          <label>
-            <span>내용</span>
-            <textarea
-              onChange={(event) => setForm((current) => ({ ...current, content: event.target.value }))}
-              required
-              rows={8}
-              value={form.content}
-            />
-          </label>
-
-          {form.board_type === "DATA_ROOM" && (
-            <>
-              <label>
-                <span>자료실 권한</span>
-                <select onChange={(event) => setForm((current) => ({ ...current, permission: event.target.value }))} value={form.permission ?? "PUBLIC"}>
-                  <option value="PUBLIC">전체공개</option>
-                  <option value="DEPARTMENT">부서공개</option>
-                  <option value="SPECIFIC">지정인원</option>
-                </select>
-              </label>
-              {form.permission === "SPECIFIC" && (
-                <>
-                  <label>
-                    <span>지정인원</span>
-                    <input onChange={(event) => setUserSearch(event.target.value)} placeholder="이름, 이메일, 부서 검색" value={userSearch} />
-                  </label>
-                  <div className="recipient-picker">
-                    {filteredUsers.slice(0, 8).map((item) => (
-                      <label className="check-label recipient-option" key={item.id}>
-                        <input checked={specificUserIds.includes(item.id)} onChange={() => toggleSpecificUser(item.id)} type="checkbox" />
-                        {item.display_name ?? item.email}
-                      </label>
-                    ))}
-                  </div>
-                </>
-              )}
-            </>
-          )}
-
-          <label>
-            <span>첨부파일</span>
-            <input multiple onChange={(event) => setFiles(Array.from(event.target.files ?? []))} type="file" />
-          </label>
-
-          <div className="form-row">
-            <label className="check-label">
-              <input
-                checked={Boolean(form.is_notice)}
-                onChange={(event) => setForm((current) => ({ ...current, is_notice: event.target.checked }))}
-                type="checkbox"
-              />
-              공지글
-            </label>
-            <label className="check-label">
-              <input
-                checked={Boolean(form.is_pinned)}
-                onChange={(event) => setForm((current) => ({ ...current, is_pinned: event.target.checked }))}
-                type="checkbox"
-              />
-              상단 고정
-            </label>
-          </div>
-
-          <button className="primary-button" disabled={isSaving} type="submit">
-            {isSaving ? "저장 중" : editingId ? "수정" : "등록"}
-          </button>
-        </form>
-
+      <section className="editor-layout collapsed">
         <section className="panel">
           <div className="panel-head">
             <h2>{listTitle}</h2>
             <span>{isLoading ? "조회 중" : `${items.length}건`}</span>
           </div>
-          <form className="list-filter-bar" onSubmit={handleSearch}>
+          <form className="list-filter-bar board-filter-bar" onSubmit={handleSearch}>
             <label className="search-field">
               <input
                 onChange={(event) => setSearchInput(event.target.value)}
@@ -310,15 +228,30 @@ export function BoardsPageContent({
                 value={searchInput}
               />
             </label>
+            {canFilterBoardType && (
+              <label className="filter-field">
+                <select onChange={(event) => setBoardTypeFilter(event.target.value)} value={boardTypeFilter}>
+                  <option value="">게시판 전체</option>
+                  {allowedTypes.map((value) => (
+                    <option key={value} value={value}>
+                      {labelOf(boardTypeLabels, value)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <div className="table-actions">
               <button className="primary-button" type="submit">
                 검색
               </button>
-              {searchTerm && (
+              {(searchTerm || boardTypeFilter) && (
                 <button className="ghost-button" onClick={clearSearch} type="button">
                   초기화
                 </button>
               )}
+              <button className={isEditorOpen ? "ghost-button" : "primary-button"} onClick={openCreateForm} type="button">
+                {isEditorOpen ? `${fixedBoardType ? "자료" : "공지사항"} 등록 닫기` : `${fixedBoardType ? "자료" : "공지사항"} 등록`}
+              </button>
             </div>
           </form>
           <div className="table-wrap">
@@ -366,6 +299,104 @@ export function BoardsPageContent({
           </div>
         </section>
       </section>
+
+      {isEditorOpen && (
+        <div className="modal-backdrop">
+          <form className="modal-panel report-detail-modal form-stack report-editor-modal" onSubmit={handleSubmit}>
+            <div className="panel-head">
+              <h2>{editingId ? `${fixedBoardType ? "자료" : "공지사항"} 수정` : `새 ${fixedBoardType ? "자료" : "공지사항"}`}</h2>
+              <button className="ghost-button" onClick={openCreateForm} type="button">
+                {fixedBoardType ? "자료 등록 닫기" : "공지사항 등록 닫기"}
+              </button>
+            </div>
+
+            <div className="report-detail-head">
+              <strong>{form.title || (fixedBoardType ? "새 자료" : "새 공지사항")}</strong>
+              <span>{labelOf(boardTypeLabels, form.board_type)}</span>
+            </div>
+
+            <div className="report-detail-meta">
+              {!fixedBoardType && (
+                <label>
+                  <dt>게시판</dt>
+                  <dd>
+                    <select onChange={(event) => setForm((current) => ({ ...current, board_type: event.target.value }))} value={form.board_type}>
+                      {allowedTypes.map((value) => (
+                        <option key={value} value={value}>{labelOf(boardTypeLabels, value)}</option>
+                      ))}
+                    </select>
+                  </dd>
+                </label>
+              )}
+              {form.board_type === "DATA_ROOM" && (
+                <label>
+                  <dt>공개 범위</dt>
+                  <dd>
+                    <select onChange={(event) => setForm((current) => ({ ...current, permission: event.target.value }))} value={form.permission ?? "PUBLIC"}>
+                      <option value="PUBLIC">전체공개</option>
+                      <option value="DEPARTMENT">부서공개</option>
+                      <option value="SPECIFIC">지정인원</option>
+                    </select>
+                  </dd>
+                </label>
+              )}
+              <label>
+                <dt>첨부</dt>
+                <dd>
+                  <input multiple onChange={(event) => setFiles(Array.from(event.target.files ?? []))} type="file" />
+                  {!!files.length && <small>{files.length}개 선택됨</small>}
+                </dd>
+              </label>
+            </div>
+
+            {form.board_type === "DATA_ROOM" && form.permission === "SPECIFIC" && (
+              <section className="report-detail-section">
+                <label>
+                  <h3>지정인원</h3>
+                  <input onChange={(event) => setUserSearch(event.target.value)} placeholder="이름, 이메일, 부서 검색" value={userSearch} />
+                </label>
+                <div className="recipient-picker board-user-picker">
+                  {filteredUsers.slice(0, 8).map((item) => (
+                    <label className="check-label recipient-option" key={item.id}>
+                      <input checked={specificUserIds.includes(item.id)} onChange={() => toggleSpecificUser(item.id)} type="checkbox" />
+                      {item.display_name ?? item.email}
+                    </label>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            <section className="report-detail-section">
+              <label>
+                <h3>제목</h3>
+                <input onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))} required value={form.title} />
+              </label>
+            </section>
+
+            <section className="report-detail-section">
+              <label>
+                <h3>내용</h3>
+                <textarea onChange={(event) => setForm((current) => ({ ...current, content: event.target.value }))} required rows={8} value={form.content} />
+              </label>
+            </section>
+
+            <div className="form-row">
+              <label className="check-label">
+                <input checked={Boolean(form.is_notice)} onChange={(event) => setForm((current) => ({ ...current, is_notice: event.target.checked }))} type="checkbox" />
+                공지글
+              </label>
+              <label className="check-label">
+                <input checked={Boolean(form.is_pinned)} onChange={(event) => setForm((current) => ({ ...current, is_pinned: event.target.checked }))} type="checkbox" />
+                상단 고정
+              </label>
+            </div>
+
+            <button className="primary-button" disabled={isSaving} type="submit">
+              {isSaving ? "저장 중" : editingId ? "수정" : "등록"}
+            </button>
+          </form>
+        </div>
+      )}
     </AppShell>
   );
 }

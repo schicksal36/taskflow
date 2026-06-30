@@ -273,6 +273,8 @@ export type WorkRequest = {
   assignee_name?: string | null;
   assignee_ids?: number[];
   assignee_names?: string[];
+  read_records?: WorkRequestReadRecord[];
+  has_read_assignee?: boolean;
   status: string;
   priority: string;
   deadline_at?: string | null;
@@ -284,6 +286,16 @@ export type WorkRequest = {
   files?: WorkRequestFile[];
   created_at?: string;
   updated_at?: string;
+};
+
+export type WorkRequestReadRecord = {
+  id: number;
+  assignee: number;
+  name?: string;
+  department?: string;
+  position?: string;
+  is_read: boolean;
+  read_at?: string | null;
 };
 
 export type WorkRequestInput = {
@@ -348,6 +360,9 @@ export type Schedule = {
   content?: string;
   owner?: number;
   owner_name?: string;
+  owner_email?: string;
+  owner_department?: string;
+  owner_position?: string;
   schedule_type: string;
   start_at: string;
   end_at?: string | null;
@@ -386,6 +401,8 @@ export type Report = {
   id: number;
   writer?: number;
   writer_name?: string;
+  writer_department?: string;
+  writer_position?: string;
   approver?: number | null;
   approver_name?: string | null;
   recipient_ids?: number[];
@@ -445,6 +462,7 @@ export type ReportInput = {
   content?: string;
   report_date: string;
   total_amount?: string | number;
+  expense_items?: ExpenseItemInput[];
 };
 
 export type ReportSummary = {
@@ -780,6 +798,10 @@ export function fetchWorkRequests(token: string) {
   return apiFetch<ListShape<WorkRequest>>("/work-requests/", { token });
 }
 
+export function fetchWorkRequest(token: string, id: number) {
+  return apiFetch<WorkRequest>(`/work-requests/${id}/`, { token });
+}
+
 export function fetchInProgressWorkRequests(token: string) {
   return apiFetch<ListShape<WorkRequest>>("/work-requests/in-progress/", { token });
 }
@@ -849,6 +871,22 @@ export function acceptWorkRequest(token: string, id: number) {
   });
 }
 
+export function completeWorkRequest(token: string, id: number) {
+  return apiFetch<WorkRequest>(`/work-requests/${id}/complete/`, {
+    method: "PATCH",
+    token,
+    body: {},
+  });
+}
+
+export function cancelWorkRequest(token: string, id: number) {
+  return apiFetch<WorkRequest>(`/work-requests/${id}/cancel/`, {
+    method: "PATCH",
+    token,
+    body: {},
+  });
+}
+
 export function rejectWorkRequest(token: string, id: number, rejected_reason = "") {
   return apiFetch<WorkRequest>(`/work-requests/${id}/reject/`, {
     method: "PATCH",
@@ -859,6 +897,10 @@ export function rejectWorkRequest(token: string, id: number, rejected_reason = "
 
 export function fetchTodos(token: string) {
   return apiFetch<ListShape<Todo>>("/todos/", { token });
+}
+
+export function fetchTodo(token: string, id: number) {
+  return apiFetch<Todo>(`/todos/${id}/`, { token });
 }
 
 export function fetchTodayTodos(token: string) {
@@ -903,6 +945,29 @@ export function updateTodoStatus(token: string, id: number, status: string) {
   });
 }
 
+export function createTodoItem(token: string, todoId: number, input: Pick<TodoItem, "content" | "sort_order">) {
+  return apiFetch<TodoItem>(`/todos/${todoId}/items/`, {
+    token,
+    body: input,
+  });
+}
+
+export function checkTodoItem(token: string, itemId: number) {
+  return apiFetch<TodoItem>(`/todos/items/${itemId}/check/`, {
+    method: "PATCH",
+    token,
+    body: {},
+  });
+}
+
+export function uncheckTodoItem(token: string, itemId: number) {
+  return apiFetch<TodoItem>(`/todos/items/${itemId}/uncheck/`, {
+    method: "PATCH",
+    token,
+    body: {},
+  });
+}
+
 export function fetchSchedules(token: string) {
   return apiFetch<ListShape<Schedule>>("/schedules/", { token });
 }
@@ -944,7 +1009,11 @@ export function deleteSchedule(token: string, id: number) {
   });
 }
 
-export function fetchReports(token: string, search?: string, filters?: { status?: string }) {
+export function fetchReports(
+  token: string,
+  search?: string,
+  filters?: { status?: string; report_type?: string; writer?: string; department?: string },
+) {
   /**
    * 업무보고 목록 조회.
    *
@@ -959,9 +1028,22 @@ export function fetchReports(token: string, search?: string, filters?: { status?
   if (filters?.status) {
     params.set("status", filters.status);
   }
+  if (filters?.report_type) {
+    params.set("report_type", filters.report_type);
+  }
+  if (filters?.writer) {
+    params.set("writer", filters.writer);
+  }
+  if (filters?.department) {
+    params.set("department", filters.department);
+  }
   const query = params.toString();
   const path = query ? `/reports/?${query}` : "/reports/";
   return apiFetch<ListShape<Report>>(path, { token });
+}
+
+export function fetchReport(token: string, id: number) {
+  return apiFetch<Report>(`/reports/${id}/`, { token });
 }
 
 export function fetchReportSummary(token: string, unit: ReportSummary["unit"], startDate: string, endDate: string) {
@@ -1005,11 +1087,53 @@ export function fetchExpenseSummary(token: string, unit: ExpenseSummary["unit"],
   return apiFetch<ExpenseSummary>(`/reports/expenses/summary/?unit=${unit}&date=${date}`, { token });
 }
 
-export function bulkUpdateExpenseStatus(token: string, ids: number[], status: "APPROVED" | "REJECTED", reason = "") {
+export type ExpenseWorkflowStatus = "APPROVED" | "REJECTED" | "SETTLING" | "SETTLED";
+
+export function bulkUpdateExpenseStatus(token: string, ids: number[], status: ExpenseWorkflowStatus, reason = "") {
   return apiFetch<{ updated_count: number }>("/reports/expenses/bulk-status/", {
     method: "PATCH",
     token,
     body: { ids, status, reason },
+  });
+}
+
+export function reviewExpenseReport(token: string, id: number) {
+  return apiFetch<Report>(`/reports/${id}/expenses/review/`, {
+    method: "PATCH",
+    token,
+    body: {},
+  });
+}
+
+export function approveExpenseReport(token: string, id: number) {
+  return apiFetch<Report>(`/reports/${id}/expenses/approve/`, {
+    method: "PATCH",
+    token,
+    body: {},
+  });
+}
+
+export function rejectExpenseReport(token: string, id: number, reason: string) {
+  return apiFetch<Report>(`/reports/${id}/expenses/reject/`, {
+    method: "PATCH",
+    token,
+    body: { reason },
+  });
+}
+
+export function settleExpenseReport(token: string, id: number) {
+  return apiFetch<Report>(`/reports/${id}/expenses/settle/`, {
+    method: "PATCH",
+    token,
+    body: {},
+  });
+}
+
+export function completeExpenseSettlement(token: string, id: number) {
+  return apiFetch<Report>(`/reports/${id}/expenses/settled/`, {
+    method: "PATCH",
+    token,
+    body: {},
   });
 }
 

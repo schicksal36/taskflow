@@ -12,7 +12,7 @@ export const workStatusLabels: Record<string, string> = {
   ASSIGNED: "배정됨",
   IN_PROGRESS: "진행중",
   ON_HOLD: "보류",
-  COMPLETED: "완료요청",
+  COMPLETED: "완료",
   APPROVED: "승인완료",
   REJECTED: "반려",
   CANCELED: "취소",
@@ -45,14 +45,15 @@ export const reportStatusLabels: Record<string, string> = {
   SUBMITTED: "제출",
   CONFIRMED: "확인완료",
   RETURNED: "보완요청",
-  REVIEWING: "검토중",
+  REVIEWING: "정산중",
   APPROVED: "승인",
   REJECTED: "반려",
+  SETTLING: "정산중",
+  SETTLED: "정산완료",
   CANCELED: "취소",
 };
 
 export const boardTypeLabels: Record<string, string> = {
-  FREE: "자유게시판",
   NOTICE: "공지사항",
   DATA_ROOM: "자료실",
 };

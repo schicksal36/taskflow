@@ -10,6 +10,7 @@ import {
   createTodo,
   deleteTodo,
   describeApiError,
+  fetchTodo,
   fetchTodos,
   toArray,
   updateTodo,
@@ -54,9 +55,11 @@ export default function TodosPage() {
   const [items, setItems] = useState<Todo[]>([]);
   const [form, setForm] = useState<TodoInput>(emptyForm);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [detailTarget, setDetailTarget] = useState<Todo | null>(null);
   const [message, setMessage] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [isDetailLoading, setIsDetailLoading] = useState(false);
 
   async function loadItems() {
     if (!accessToken) {
@@ -168,6 +171,22 @@ export default function TodosPage() {
     }
   }
 
+  async function handleOpenDetail(id: number) {
+    if (!accessToken) {
+      return;
+    }
+
+    setIsDetailLoading(true);
+    setMessage("");
+    try {
+      setDetailTarget(await fetchTodo(accessToken, id));
+    } catch (error) {
+      setMessage(describeApiError(error));
+    } finally {
+      setIsDetailLoading(false);
+    }
+  }
+
   return (
     <AppShell title="내 할 일" description="할 일 API로 개인 업무를 등록하고 상태를 관리합니다.">
       {message && <p className="notice error">{message}</p>}
@@ -276,7 +295,11 @@ export default function TodosPage() {
                 <tbody>
                   {items.map((item) => (
                     <tr key={item.id}>
-                      <td>{item.title}</td>
+                      <td>
+                        <button className="table-title-button" onClick={() => handleOpenDetail(item.id)} type="button">
+                          {item.title}
+                        </button>
+                      </td>
                       <td>
                         <select
                           aria-label={`${item.title} 상태`}
@@ -318,6 +341,56 @@ export default function TodosPage() {
           </div>
         </section>
       </section>
+
+      {isDetailLoading && (
+        <div className="modal-backdrop">
+          <div className="modal-panel report-detail-modal">
+            <p className="report-detail-loading">할 일을 불러오는 중입니다.</p>
+          </div>
+        </div>
+      )}
+
+      {detailTarget && !isDetailLoading && (
+        <div className="modal-backdrop">
+          <div className="modal-panel report-detail-modal">
+            <div className="panel-head">
+              <h2>할 일 내용</h2>
+              <button className="ghost-button" onClick={() => setDetailTarget(null)} type="button">
+                닫기
+              </button>
+            </div>
+
+            <div className="report-detail-head">
+              <strong>{detailTarget.title}</strong>
+              <span>{labelOf(todoStatusLabels, detailTarget.status)}</span>
+            </div>
+
+            <dl className="report-detail-meta">
+              <div>
+                <dt>우선순위</dt>
+                <dd>{labelOf(priorityLabels, detailTarget.priority)}</dd>
+              </div>
+              <div>
+                <dt>마감일</dt>
+                <dd>{formatDateTime(detailTarget.deadline_at)}</dd>
+              </div>
+              <div>
+                <dt>알림일</dt>
+                <dd>{formatDateTime(detailTarget.remind_at)}</dd>
+              </div>
+              <div>
+                <dt>완료일</dt>
+                <dd>{formatDateTime(detailTarget.completed_at)}</dd>
+              </div>
+            </dl>
+
+            <section className="report-detail-section">
+              <h3>내용</h3>
+              <p className="report-detail-content">{detailTarget.content?.trim() || "작성된 내용이 없습니다."}</p>
+            </section>
+          </div>
+        </div>
+      )}
     </AppShell>
   );
 }

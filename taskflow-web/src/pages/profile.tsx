@@ -34,8 +34,6 @@ export default function ProfilePage() {
   const [profileForm, setProfileForm] = useState<UserProfile>({
     bio: "",
   });
-  const [approval, setApproval] = useState<AdminApprovalRequest | null>(null);
-  const [approvalForm, setApprovalForm] = useState({ reason: "", experience: "" });
   const [biometricItems, setBiometricItems] = useState<BiometricCredential[]>([]);
   const [deviceName, setDeviceName] = useState("");
   const [supportsBiometric, setSupportsBiometric] = useState(false);
@@ -47,6 +45,11 @@ export default function ProfilePage() {
   });
   const [message, setMessage] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  const [isAdminApplyOpen, setIsAdminApplyOpen] = useState(false);
+  const [approval, setApproval] = useState<AdminApprovalRequest | null>(null);
+  const [approvalForm, setApprovalForm] = useState({ reason: "", experience: "" });
+  const [approvalMessage, setApprovalMessage] = useState("");
+  const [isApprovalSaving, setIsApprovalSaving] = useState(false);
 
   useEffect(() => {
     if (user) {
@@ -120,6 +123,7 @@ export default function ProfilePage() {
 
     async function loadApproval() {
       if (!accessToken || user?.role !== "USER") {
+        setApproval(null);
         return;
       }
 
@@ -200,26 +204,6 @@ export default function ProfilePage() {
     }
   }
 
-  async function handleApprovalSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!accessToken) {
-      return;
-    }
-
-    setIsSaving(true);
-    setMessage("");
-
-    try {
-      const nextApproval = await createAdminApprovalRequest(accessToken, approvalForm);
-      setApproval(nextApproval);
-      setMessage("승격 신청이 접수되었습니다.");
-    } catch (error) {
-      setMessage(describeApiError(error));
-    } finally {
-      setIsSaving(false);
-    }
-  }
-
   async function handleBiometricRegister(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!accessToken || !supportsBiometric) {
@@ -259,10 +243,59 @@ export default function ProfilePage() {
     }
   }
 
+  async function handleAdminApprovalSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!accessToken) {
+      return;
+    }
+
+    setIsApprovalSaving(true);
+    setApprovalMessage("");
+
+    try {
+      const nextApproval = await createAdminApprovalRequest(accessToken, approvalForm);
+      setApproval(nextApproval);
+      setApprovalForm({ reason: "", experience: "" });
+      setApprovalMessage("관리자 신청이 접수되었습니다.");
+    } catch (error) {
+      setApprovalMessage(describeApiError(error));
+    } finally {
+      setIsApprovalSaving(false);
+    }
+  }
+
   const roleLabel = user?.role === "CEO" ? "대표이사" : user?.role === "ADMIN" ? "관리자" : "일반사용자";
+  const displayName = user?.first_name || user?.username || user?.email || "";
+  const approvalStatusLabel =
+    approval?.status === "PENDING"
+      ? "검토중"
+      : approval?.status === "APPROVED"
+        ? "승인"
+        : approval?.status === "REJECTED"
+          ? "거절"
+          : "신규";
 
   return (
-    <AppShell title="마이페이지" description="사용자 정보와 프로필 API로 내 정보를 관리합니다.">
+    <AppShell
+      title="마이페이지"
+      description="사용자 정보와 프로필 API로 내 정보를 관리합니다."
+      actions={
+        user?.role === "USER" ? (
+          <button className="profile-admin-action" onClick={() => setIsAdminApplyOpen(true)} type="button">
+            <svg aria-hidden="true" fill="none" height="18" viewBox="0 0 24 24" width="18">
+              <path
+                d="M12 3.5 18.5 6v5.1c0 4.1-2.6 7.8-6.5 9.4-3.9-1.6-6.5-5.3-6.5-9.4V6L12 3.5Z"
+                stroke="currentColor"
+                strokeLinejoin="round"
+                strokeWidth="2"
+              />
+              <path d="M9.2 12.1 11 13.9l3.9-4" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
+            </svg>
+            <span>관리자 신청</span>
+          </button>
+        ) : undefined
+      }
+    >
       {message && <p className={message.includes("저장") || message.includes("변경") ? "notice" : "notice error"}>{message}</p>}
 
       <section className="profile-grid">
@@ -365,49 +398,6 @@ export default function ProfilePage() {
         </form>
       </section>
 
-      {user?.role === "USER" && (
-        <section className="panel form-stack">
-          <div className="panel-head">
-            <h2>관리자 승격 신청</h2>
-            {approval && <span>{approval.status === "PENDING" ? "대기" : approval.status === "APPROVED" ? "승인" : "거절"}</span>}
-          </div>
-
-          {approval && approval.status !== "REJECTED" ? (
-            <p className="notice">
-              {approval.status === "PENDING" && "승격 신청이 접수되었습니다. 대표이사 검토 중입니다."}
-              {approval.status === "APPROVED" && "관리자로 승격되었습니다."}
-            </p>
-          ) : (
-            <form className="form-stack" onSubmit={handleApprovalSubmit}>
-              {approval?.status === "REJECTED" && (
-                <p className="notice error">승격 신청이 거절되었습니다. {approval.reject_reason ?? ""}</p>
-              )}
-              <label>
-                <span>신청 사유</span>
-                <textarea
-                  onChange={(event) => setApprovalForm((current) => ({ ...current, reason: event.target.value }))}
-                  required
-                  rows={4}
-                  value={approvalForm.reason}
-                />
-              </label>
-              <label>
-                <span>관련 경력/업무 내용</span>
-                <textarea
-                  onChange={(event) => setApprovalForm((current) => ({ ...current, experience: event.target.value }))}
-                  required
-                  rows={4}
-                  value={approvalForm.experience}
-                />
-              </label>
-              <button className="primary-button" disabled={isSaving} type="submit">
-                승격 신청
-              </button>
-            </form>
-          )}
-        </section>
-      )}
-
       <section className="editor-layout">
         <form className="panel form-stack" onSubmit={handleBiometricRegister}>
           <div className="panel-head">
@@ -479,6 +469,66 @@ export default function ProfilePage() {
           회원 탈퇴
         </button>
       </section>
+
+      {isAdminApplyOpen && (
+        <div className="modal-backdrop">
+          <div className="modal-panel report-detail-modal">
+            <div className="panel-head">
+              <h2>관리자 신청서</h2>
+              <button className="ghost-button" onClick={() => setIsAdminApplyOpen(false)} type="button">
+                닫기
+              </button>
+            </div>
+
+            {approvalMessage && <p className={approvalMessage.includes("접수") ? "notice" : "notice error"}>{approvalMessage}</p>}
+
+            <div className="report-detail-head">
+              <strong>{displayName}</strong>
+              <span>{approvalStatusLabel}</span>
+            </div>
+
+            {approval && approval.status !== "REJECTED" ? (
+              <section className="report-detail-section">
+                <p className="notice">
+                  {approval.status === "PENDING" && "관리자 신청이 접수되었습니다. 대표이사 검토 중입니다."}
+                  {approval.status === "APPROVED" && "관리자로 승격되었습니다."}
+                </p>
+              </section>
+            ) : (
+              <form className="form-stack admin-approval-form" onSubmit={handleAdminApprovalSubmit}>
+                {approval?.status === "REJECTED" && (
+                  <p className="notice error">이전 신청이 거절되었습니다. {approval.reject_reason ?? ""}</p>
+                )}
+                <section className="report-detail-section">
+                  <label>
+                    <h3>신청 사유</h3>
+                    <textarea
+                      onChange={(event) => setApprovalForm((current) => ({ ...current, reason: event.target.value }))}
+                      required
+                      rows={5}
+                      value={approvalForm.reason}
+                    />
+                  </label>
+                </section>
+                <section className="report-detail-section">
+                  <label>
+                    <h3>관련 경력/업무 내용</h3>
+                    <textarea
+                      onChange={(event) => setApprovalForm((current) => ({ ...current, experience: event.target.value }))}
+                      required
+                      rows={5}
+                      value={approvalForm.experience}
+                    />
+                  </label>
+                </section>
+                <button className="primary-button" disabled={isApprovalSaving} type="submit">
+                  {isApprovalSaving ? "접수 중" : "관리자 신청"}
+                </button>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
     </AppShell>
   );
 }

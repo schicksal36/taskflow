@@ -127,6 +127,13 @@ function dDayLabel(value?: string | null) {
   return diff > 0 ? `D-${diff}` : `D+${Math.abs(diff)}`;
 }
 
+function scheduleOwnerLabel(item: Schedule) {
+  const name = item.owner_name || item.owner_email || "-";
+  const org = [item.owner_department, item.owner_position].filter(Boolean).join("/");
+  const contact = item.owner_email ? (org ? ` · ${item.owner_email}` : item.owner_email) : "";
+  return org || contact ? `${name} (${org}${contact})` : name;
+}
+
 function toDateTimeInput(value?: string | null) {
   if (!value) {
     return "";
@@ -140,11 +147,57 @@ function toDateTimeInput(value?: string | null) {
   return date.toISOString().slice(0, 16);
 }
 
+function splitDateTimeInput(value?: string | null) {
+  const dateTime = toDateTimeInput(value);
+  const [date = "", time = ""] = dateTime.split("T");
+  return { date, time };
+}
+
+function combineDateTimeParts(date: string, time: string) {
+  if (!date) {
+    return "";
+  }
+  return time ? `${date}T${time}` : date;
+}
+
+function isMultiDayRange(startDate: string, endDate: string) {
+  return Boolean(startDate && endDate && startDate !== endDate);
+}
+
+function normalizeTimeValue(value: string) {
+  const digits = value.replace(/\D/g, "").slice(0, 4);
+  if (digits.length <= 2) {
+    return digits;
+  }
+  return `${digits.slice(0, -2).padStart(2, "0")}:${digits.slice(-2)}`;
+}
+
+function submissionTime(value: string, fallbackTime: string) {
+  const match = value.match(/^(\d{1,2}):([0-5]\d)$/);
+  if (!match) {
+    return fallbackTime;
+  }
+  const hour = Number(match[1]);
+  if (Number.isNaN(hour) || hour > 23) {
+    return fallbackTime;
+  }
+  return `${String(hour).padStart(2, "0")}:${match[2]}`;
+}
+
+function withSubmissionTime(date: string, time: string, fallbackTime: string) {
+  return date ? `${date}T${submissionTime(time, fallbackTime)}` : "";
+}
+
 function cleanInput(input: ScheduleInput): ScheduleInput {
+  const start = splitDateTimeInput(input.start_at);
+  const end = splitDateTimeInput(input.end_at);
+  const timeOptional = Boolean(input.is_all_day || isMultiDayRange(start.date, end.date));
+
   return {
     ...input,
     is_shared: true,
-    end_at: input.end_at || null,
+    start_at: withSubmissionTime(start.date, start.time, timeOptional ? "00:00" : "09:00"),
+    end_at: end.date ? withSubmissionTime(end.date, end.time, timeOptional ? "23:59" : start.time || "10:00") : null,
     remind_at: input.remind_at || null,
     location: input.location ?? "",
   };
@@ -157,13 +210,14 @@ export default function SchedulesPage() {
    * 공유 일정 메인 화면을 구성합니다.
    * JWT 인증된 사용자 기준으로 일정과 내 할일을 함께 불러와 달력에 표시하고,
    * 작성자 권한이 있는 일정은 우측 패널에서 수정/삭제할 수 있습니다.
-   */
+  */
   const router = useRouter();
-  const { accessToken } = useAuth();
+  const { accessToken, user } = useAuth();
   const [items, setItems] = useState<Schedule[]>([]);
   const [todos, setTodos] = useState<Todo[]>([]);
   const [form, setForm] = useState<ScheduleInput>(emptyForm);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [subscriptionUrl, setSubscriptionUrl] = useState("");
   const [googleCalendarUrl, setGoogleCalendarUrl] = useState("");
@@ -173,6 +227,7 @@ export default function SchedulesPage() {
   const [viewMode, setViewMode] = useState<ScheduleViewMode>("month");
   const [calendarMonth, setCalendarMonth] = useState(() => new Date());
   const [selectedDate, setSelectedDate] = useState(() => new Date());
+  const [dayDetailDate, setDayDetailDate] = useState<Date | null>(null);
 
   const calendarDays = useMemo(() => buildCalendarDays(calendarMonth), [calendarMonth]);
   const weekDays = useMemo(() => {
@@ -181,6 +236,11 @@ export default function SchedulesPage() {
   }, [selectedDate]);
   const selectedDateSchedules = useMemo(() => schedulesForDate(items, selectedDate), [items, selectedDate]);
   const selectedDateTodos = useMemo(() => todosForDate(todos, selectedDate), [todos, selectedDate]);
+  const myScheduleItems = useMemo(() => items.filter((item) => item.owner === user?.id), [items, user?.id]);
+
+  function canManageSchedule(item: Schedule) {
+    return item.owner === user?.id;
+  }
 
   async function loadItems() {
     /**
@@ -230,6 +290,7 @@ export default function SchedulesPage() {
 
   function startEdit(item: Schedule) {
     setEditingId(item.id);
+    setIsEditorOpen(true);
     setForm({
       title: item.title,
       content: item.content ?? "",
@@ -248,18 +309,27 @@ export default function SchedulesPage() {
   function resetForm() {
     setEditingId(null);
     setForm(emptyForm);
+    setIsEditorOpen(false);
   }
 
   function openCreatePanel(date: Date) {
     const dateValue = formatDateInput(date);
     setSelectedDate(date);
     setCalendarMonth(new Date(date.getFullYear(), date.getMonth(), 1));
+    setDayDetailDate(null);
     setEditingId(null);
+    setIsEditorOpen(true);
     setForm({
       ...emptyForm,
       start_at: `${dateValue}T09:00`,
-      end_at: "",
+      end_at: `${dateValue}T10:00`,
     });
+  }
+
+  function openDayDetail(date: Date) {
+    setSelectedDate(date);
+    setCalendarMonth(new Date(date.getFullYear(), date.getMonth(), 1));
+    setDayDetailDate(date);
   }
 
   function shiftCalendar(amount: number) {
@@ -352,19 +422,29 @@ export default function SchedulesPage() {
     }
   }
 
+  const startDateTime = splitDateTimeInput(form.start_at);
+  const endDateTime = splitDateTimeInput(form.end_at);
+  const remindDateTime = splitDateTimeInput(form.remind_at);
+  const timeOptional = Boolean(form.is_all_day || isMultiDayRange(startDateTime.date, endDateTime.date));
+
   return (
     <AppShell
       title="공유 일정"
       description="참여자와 함께 보는 공유 일정을 관리합니다."
       actions={
-        <button
-          aria-expanded={isSubscriptionOpen}
-          className="ghost-button"
-          onClick={() => setIsSubscriptionOpen((current) => !current)}
-          type="button"
-        >
-          구글 캘린더 구독 {isSubscriptionOpen ? "접기" : "펼치기"}
-        </button>
+        <>
+          <button className="primary-button" onClick={() => openCreatePanel(selectedDate)} type="button">
+            일정 등록
+          </button>
+          <button
+            aria-expanded={isSubscriptionOpen}
+            className="ghost-button"
+            onClick={() => setIsSubscriptionOpen((current) => !current)}
+            type="button"
+          >
+            구글 캘린더 구독 {isSubscriptionOpen ? "접기" : "펼치기"}
+          </button>
+        </>
       }
     >
       {message && <p className="notice error">{message}</p>}
@@ -460,7 +540,14 @@ export default function SchedulesPage() {
                         <div
                           className={`calendar-day${date ? "" : " muted"}${isToday ? " today" : ""}${isSelected ? " selected" : ""}`}
                           key={date?.toISOString() ?? `empty-${index}`}
-                          onClick={() => date && openCreatePanel(date)}
+                          onClick={() => date && openDayDetail(date)}
+                          onDoubleClick={(event) => {
+                            if (!date) {
+                              return;
+                            }
+                            event.stopPropagation();
+                            openCreatePanel(date);
+                          }}
                         >
                           {date && (
                             <>
@@ -472,7 +559,11 @@ export default function SchedulesPage() {
                                     key={item.id}
                                     onClick={(event) => {
                                       event.stopPropagation();
-                                      startEdit(item);
+                                      if (canManageSchedule(item)) {
+                                        startEdit(item);
+                                      } else if (date) {
+                                        openDayDetail(date);
+                                      }
                                     }}
                                     style={{ borderLeftColor: item.color ?? "#2563eb" }}
                                     type="button"
@@ -500,7 +591,7 @@ export default function SchedulesPage() {
             <div className="schedule-list-under">
               <div className="panel-head compact-head">
                 <h2>일정 목록</h2>
-                <span>{isLoading ? "조회 중" : `${items.length}건`}</span>
+                <span>{isLoading ? "조회 중" : `${myScheduleItems.length}건`}</span>
               </div>
               <div className="table-wrap">
                 <table>
@@ -515,7 +606,7 @@ export default function SchedulesPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {items.map((item) => (
+                    {myScheduleItems.map((item) => (
                       <tr key={item.id}>
                         <td>{item.title}</td>
                         <td>{labelOf(scheduleTypeLabels, item.schedule_type)}</td>
@@ -532,9 +623,9 @@ export default function SchedulesPage() {
                         </td>
                       </tr>
                     ))}
-                    {!items.length && (
+                    {!myScheduleItems.length && (
                       <tr>
-                        <td colSpan={6}>{isLoading ? "조회 중입니다." : "조회된 일정이 없습니다."}</td>
+                        <td colSpan={6}>{isLoading ? "조회 중입니다." : "내가 등록한 일정이 없습니다."}</td>
                       </tr>
                     )}
                   </tbody>
@@ -544,107 +635,209 @@ export default function SchedulesPage() {
           </div>
         </section>
 
-        <form className="panel editor-panel schedule-side-panel" onSubmit={handleSubmit}>
-          <div className="panel-head">
-            <h2>{editingId ? "일정 수정" : "일정 추가"}</h2>
-            <button className="ghost-button" onClick={resetForm} type="button">
-              초기화
-            </button>
-          </div>
+      </section>
 
-          <div className="panel-body form-stack">
-            <label>
-              <span>제목</span>
+      {isEditorOpen && (
+        <div className="modal-backdrop">
+          <form className="modal-panel schedule-editor-modal" onSubmit={handleSubmit}>
+            <div className="schedule-editor-head">
+              <button aria-label="닫기" className="icon-button" onClick={resetForm} type="button">
+                ×
+              </button>
               <input
+                aria-label="일정 제목"
+                className="schedule-title-input"
                 onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))}
+                placeholder="제목 추가"
                 required
                 value={form.title}
               />
-            </label>
+            </div>
 
-            <label>
-              <span>내용</span>
-              <textarea
-                onChange={(event) => setForm((current) => ({ ...current, content: event.target.value }))}
-                rows={4}
-                value={form.content}
+            <div className="schedule-editor-body">
+              <div className="schedule-editor-icon" aria-hidden="true">•</div>
+              <div className="schedule-time-row">
+                <input
+                  aria-label="시작일"
+                  onChange={(event) => setForm((current) => ({ ...current, start_at: combineDateTimeParts(event.target.value, startDateTime.time) }))}
+                  required
+                  type="date"
+                  value={startDateTime.date}
+                />
+                <input
+                  aria-label="시작시간"
+                  className="time-text-input"
+                  inputMode="numeric"
+                  maxLength={5}
+                  onChange={(event) => setForm((current) => ({ ...current, start_at: combineDateTimeParts(startDateTime.date, normalizeTimeValue(event.target.value)) }))}
+                  pattern="[0-2][0-9]:[0-5][0-9]"
+                  placeholder={timeOptional ? "선택" : "09:00"}
+                  value={startDateTime.time}
+                />
+                <span>-</span>
+                <input
+                  aria-label="종료시간"
+                  className="time-text-input"
+                  inputMode="numeric"
+                  maxLength={5}
+                  onChange={(event) => setForm((current) => ({ ...current, end_at: combineDateTimeParts(endDateTime.date || startDateTime.date, normalizeTimeValue(event.target.value)) }))}
+                  pattern="[0-2][0-9]:[0-5][0-9]"
+                  placeholder={timeOptional ? "선택" : "10:00"}
+                  value={endDateTime.time}
+                />
+                <input
+                  aria-label="종료일"
+                  onChange={(event) => setForm((current) => ({ ...current, end_at: combineDateTimeParts(event.target.value, endDateTime.time || startDateTime.time) }))}
+                  type="date"
+                  value={endDateTime.date || startDateTime.date}
+                />
+              </div>
+
+              <div />
+              <div className="schedule-inline-options">
+                <label className="check-label">
+                  <input
+                    checked={Boolean(form.is_all_day)}
+                    onChange={(event) => setForm((current) => ({ ...current, is_all_day: event.target.checked }))}
+                    type="checkbox"
+                  />
+                  종일
+                </label>
+                <span>반복 안함</span>
+              </div>
+
+              <div className="schedule-editor-icon" aria-hidden="true">i</div>
+              <div className="schedule-editor-tabs">
+                <button className="active" type="button">일정 세부정보</button>
+                <button type="button">시간 찾기</button>
+              </div>
+
+              <div className="schedule-editor-icon" aria-hidden="true">⌖</div>
+              <input
+                onChange={(event) => setForm((current) => ({ ...current, location: event.target.value }))}
+                placeholder="위치 추가"
+                value={form.location}
               />
-            </label>
 
-            <div className="form-grid two">
-              <label>
-                <span>구분</span>
+              <div className="schedule-editor-icon" aria-hidden="true">!</div>
+              <div className="schedule-time-row compact">
+                <input
+                  aria-label="알림일"
+                  onChange={(event) => setForm((current) => ({ ...current, remind_at: combineDateTimeParts(event.target.value, remindDateTime.time || startDateTime.time) }))}
+                  type="date"
+                  value={remindDateTime.date}
+                />
+                <input
+                  aria-label="알림시간"
+                  className="time-text-input"
+                  inputMode="numeric"
+                  maxLength={5}
+                  onChange={(event) => setForm((current) => ({ ...current, remind_at: combineDateTimeParts(remindDateTime.date || startDateTime.date, normalizeTimeValue(event.target.value)) }))}
+                  pattern="[0-2][0-9]:[0-5][0-9]"
+                  placeholder="09:00"
+                  value={remindDateTime.time}
+                />
+              </div>
+
+              <div className="schedule-editor-icon" aria-hidden="true">▣</div>
+              <div className="schedule-time-row compact">
                 <input
                   onChange={(event) => setForm((current) => ({ ...current, schedule_type: event.target.value }))}
-                  placeholder="예: 회의, 외근, 프로젝트"
+                  placeholder="구분 추가"
                   value={form.schedule_type}
                 />
-              </label>
-              <label>
-                <span>장소</span>
                 <input
-                  onChange={(event) => setForm((current) => ({ ...current, location: event.target.value }))}
-                  value={form.location}
-                />
-              </label>
-            </div>
-
-            <div className="form-grid two">
-              <label>
-                <span>시작</span>
-                <input
-                  onChange={(event) => setForm((current) => ({ ...current, start_at: event.target.value }))}
-                  required
-                  type="datetime-local"
-                  value={form.start_at}
-                />
-              </label>
-              <label>
-                <span>종료 선택사항</span>
-                <input
-                  onChange={(event) => setForm((current) => ({ ...current, end_at: event.target.value }))}
-                  type="datetime-local"
-                  value={form.end_at ?? ""}
-                />
-              </label>
-            </div>
-
-            <div className="form-grid two">
-              <label>
-                <span>색상</span>
-                <input
+                  aria-label="색상"
                   onChange={(event) => setForm((current) => ({ ...current, color: event.target.value }))}
                   type="color"
                   value={form.color}
                 />
-              </label>
-              <label>
-                <span>알림일</span>
-                <input
-                  onChange={(event) => setForm((current) => ({ ...current, remind_at: event.target.value }))}
-                  type="datetime-local"
-                  value={form.remind_at ?? ""}
-                />
-              </label>
+              </div>
+
+              <div className="schedule-editor-icon" aria-hidden="true">≡</div>
+              <textarea
+                onChange={(event) => setForm((current) => ({ ...current, content: event.target.value }))}
+                placeholder="설명 추가"
+                rows={7}
+                value={form.content}
+              />
             </div>
 
-            <div className="form-row">
-              <label className="check-label">
-                <input
-                  checked={Boolean(form.is_all_day)}
-                  onChange={(event) => setForm((current) => ({ ...current, is_all_day: event.target.checked }))}
-                  type="checkbox"
-                />
-                종일 일정
-              </label>
+            <div className="schedule-editor-actions">
+              <button className="ghost-button" onClick={resetForm} type="button">취소</button>
+              <button className="primary-button" disabled={isSaving} type="submit">
+                {isSaving ? "저장 중" : editingId ? "수정" : "등록"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {dayDetailDate && (
+        <div className="modal-backdrop">
+          <div className="modal-panel report-detail-modal schedule-day-modal">
+            <div className="panel-head">
+              <h2>일정 내용</h2>
+              <button className="ghost-button" onClick={() => setDayDetailDate(null)} type="button">
+                닫기
+              </button>
             </div>
 
-            <button className="primary-button" disabled={isSaving} type="submit">
-              {isSaving ? "저장 중" : editingId ? "수정" : "등록"}
+            <div className="report-detail-head">
+              <strong>{formatDate(dayDetailDate.toISOString())}</strong>
+              <span>{selectedDateSchedules.length + selectedDateTodos.length}건</span>
+            </div>
+
+            <section className="report-detail-section">
+              <h3>일정</h3>
+              {selectedDateSchedules.length ? (
+                <div className="schedule-detail-list">
+                  {selectedDateSchedules.map((item) => (
+                    <button
+                      key={item.id}
+                      onClick={() => {
+                        if (canManageSchedule(item)) {
+                          startEdit(item);
+                          setDayDetailDate(null);
+                        }
+                      }}
+                      style={{ borderLeftColor: item.color ?? "#2563eb" }}
+                      type="button"
+                    >
+                      <strong>{item.title}</strong>
+                      <span>{labelOf(scheduleTypeLabels, item.schedule_type)} · {formatDateTime(item.start_at)}</span>
+                      <small>작성자 {scheduleOwnerLabel(item)}</small>
+                      {item.location && <small>{item.location}</small>}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="report-detail-empty">등록된 일정이 없습니다.</p>
+              )}
+            </section>
+
+            <section className="report-detail-section">
+              <h3>체크리스트 마감</h3>
+              {selectedDateTodos.length ? (
+                <div className="checklist-detail-list">
+                  {selectedDateTodos.map((todo) => (
+                    <label key={todo.id}>
+                      <input checked={todo.status === "DONE"} readOnly type="checkbox" />
+                      <span>{dDayLabel(todo.deadline_at)} {todo.title}</span>
+                    </label>
+                  ))}
+                </div>
+              ) : (
+                <p className="report-detail-empty">마감 예정 체크리스트가 없습니다.</p>
+              )}
+            </section>
+
+            <button className="primary-button" onClick={() => openCreatePanel(dayDetailDate)} type="button">
+              일정 등록
             </button>
           </div>
-        </form>
-      </section>
+        </div>
+      )}
     </AppShell>
   );
 }

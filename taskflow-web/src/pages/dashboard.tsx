@@ -4,15 +4,17 @@
  * 주요 기능:
  *   - 여러 API를 병렬 호출해 대시보드 카드와 목록 구성
  *   - 일부 API 실패 시 전체 화면을 막지 않고 실패 메시지만 표시
- *   - 오늘 할일/오늘 일정/최근 알림/보고 현황 표시
- * 사용 API: /api/work-requests/*, /api/todos/today/, /api/schedules/today/, /api/notifications/unread/, /api/reports/*
+ *   - 오늘 할일/오늘 일정/공지사항/보고 현황 표시
+ * 사용 API: /api/work-requests/*, /api/todos/today/, /api/schedules/today/, /api/notifications/unread/, /api/reports/*, /api/boards/notices/
  */
+import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { AppShell } from "@/components/AppShell";
 import { StatCard } from "@/components/StatCard";
 import { useAuth } from "@/contexts/AuthContext";
 import {
+  type BoardPost,
   type Notification,
   type Report,
   type Schedule,
@@ -20,7 +22,9 @@ import {
   type WorkRequest,
   describeApiError,
   fetchAssignedWorkRequests,
+  fetchBoardNotices,
   fetchExpenseReports,
+  fetchTodo,
   fetchInProgressWorkRequests,
   fetchTodaySchedules,
   fetchTodayTodos,
@@ -37,6 +41,7 @@ type DashboardState = {
   todos: Todo[];
   schedules: Schedule[];
   notifications: Notification[];
+  notices: BoardPost[];
   workReports: Report[];
   expenseReports: Report[];
 };
@@ -47,6 +52,7 @@ const initialState: DashboardState = {
   todos: [],
   schedules: [],
   notifications: [],
+  notices: [],
   workReports: [],
   expenseReports: [],
 };
@@ -54,8 +60,10 @@ const initialState: DashboardState = {
 export default function DashboardPage() {
   const { accessToken } = useAuth();
   const [state, setState] = useState<DashboardState>(initialState);
+  const [todoDetail, setTodoDetail] = useState<Todo | null>(null);
   const [message, setMessage] = useState("");
   const [isLoading, setIsLoading] = useState(true);
+  const [isTodoDetailLoading, setIsTodoDetailLoading] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -77,13 +85,14 @@ export default function DashboardPage() {
       setIsLoading(true);
       setMessage("");
 
-      const [inProgress, assigned, todos, schedules, notifications, workReports, expenseReports] =
+      const [inProgress, assigned, todos, schedules, notifications, notices, workReports, expenseReports] =
         await Promise.allSettled([
           fetchInProgressWorkRequests(accessToken),
           fetchAssignedWorkRequests(accessToken),
           fetchTodayTodos(accessToken),
           fetchTodaySchedules(accessToken),
           fetchUnreadNotifications(accessToken),
+          fetchBoardNotices(accessToken),
           fetchWorkReports(accessToken),
           fetchExpenseReports(accessToken),
         ]);
@@ -98,11 +107,12 @@ export default function DashboardPage() {
         todos: todos.status === "fulfilled" ? toArray(todos.value) : [],
         schedules: schedules.status === "fulfilled" ? toArray(schedules.value) : [],
         notifications: notifications.status === "fulfilled" ? toArray(notifications.value) : [],
+        notices: notices.status === "fulfilled" ? toArray(notices.value) : [],
         workReports: workReports.status === "fulfilled" ? toArray(workReports.value) : [],
         expenseReports: expenseReports.status === "fulfilled" ? toArray(expenseReports.value) : [],
       });
 
-      const failed = [inProgress, assigned, todos, schedules, notifications, workReports, expenseReports].find(
+      const failed = [inProgress, assigned, todos, schedules, notifications, notices, workReports, expenseReports].find(
         (result) => result.status === "rejected",
       );
       setMessage(failed?.status === "rejected" ? describeApiError(failed.reason) : "");
@@ -115,6 +125,22 @@ export default function DashboardPage() {
       isMounted = false;
     };
   }, [accessToken]);
+
+  async function handleOpenTodoDetail(id: number) {
+    if (!accessToken) {
+      return;
+    }
+
+    setIsTodoDetailLoading(true);
+    setMessage("");
+    try {
+      setTodoDetail(await fetchTodo(accessToken, id));
+    } catch (error) {
+      setMessage(describeApiError(error));
+    } finally {
+      setIsTodoDetailLoading(false);
+    }
+  }
 
   return (
     <AppShell title="대시보드" description="백엔드 API에서 조회한 현재 업무 현황입니다.">
@@ -148,7 +174,9 @@ export default function DashboardPage() {
               <tbody>
                 {state.assigned.slice(0, 5).map((item) => (
                   <tr key={item.id}>
-                    <td>{item.title}</td>
+                    <td>
+                      {item.title}
+                    </td>
                     <td>
                       <span className="status-pill">{labelOf(workStatusLabels, item.status)}</span>
                     </td>
@@ -176,7 +204,9 @@ export default function DashboardPage() {
           <ul className="compact-list">
             {state.todos.slice(0, 5).map((todo) => (
               <li key={todo.id}>
-                <strong>{todo.title}</strong>
+                <button className="compact-title-button" onClick={() => handleOpenTodoDetail(todo.id)} type="button">
+                  {todo.title}
+                </button>
                 <span>{labelOf(todoStatusLabels, todo.status)}</span>
               </li>
             ))}
@@ -226,20 +256,75 @@ export default function DashboardPage() {
 
         <article className="panel">
           <div className="panel-head">
-            <h2>최근 알림</h2>
-            <span>{state.notifications.length}건</span>
+            <h2>공지사항</h2>
+            <div className="panel-actions">
+              <span>{state.notices.length}건</span>
+              <Link className="ghost-button" href="/boards">
+                전체보기
+              </Link>
+            </div>
           </div>
           <ul className="compact-list">
-            {state.notifications.slice(0, 5).map((notification) => (
-              <li key={notification.id}>
-                <strong>{notification.title}</strong>
-                <span>{formatDateTime(notification.created_at)}</span>
+            {state.notices.slice(0, 5).map((notice) => (
+              <li key={notice.id}>
+                <strong>{notice.title}</strong>
+                <span>{formatDateTime(notice.created_at)}</span>
               </li>
             ))}
-            {!state.notifications.length && <li>읽지 않은 알림이 없습니다.</li>}
+            {!state.notices.length && <li>등록된 공지사항이 없습니다.</li>}
           </ul>
         </article>
       </section>
+
+      {isTodoDetailLoading && (
+        <div className="modal-backdrop">
+          <div className="modal-panel report-detail-modal">
+            <p className="report-detail-loading">할 일을 불러오는 중입니다.</p>
+          </div>
+        </div>
+      )}
+
+      {todoDetail && !isTodoDetailLoading && (
+        <div className="modal-backdrop">
+          <div className="modal-panel report-detail-modal">
+            <div className="panel-head">
+              <h2>업무 내용</h2>
+              <button className="ghost-button" onClick={() => setTodoDetail(null)} type="button">
+                닫기
+              </button>
+            </div>
+
+            <div className="report-detail-head">
+              <strong>{todoDetail.title}</strong>
+              <span>{labelOf(todoStatusLabels, todoDetail.status)}</span>
+            </div>
+
+            <dl className="report-detail-meta">
+              <div>
+                <dt>우선순위</dt>
+                <dd>{labelOf(priorityLabels, todoDetail.priority)}</dd>
+              </div>
+              <div>
+                <dt>마감일</dt>
+                <dd>{formatDateTime(todoDetail.deadline_at)}</dd>
+              </div>
+              <div>
+                <dt>알림일</dt>
+                <dd>{formatDateTime(todoDetail.remind_at)}</dd>
+              </div>
+              <div>
+                <dt>완료일</dt>
+                <dd>{formatDateTime(todoDetail.completed_at)}</dd>
+              </div>
+            </dl>
+
+            <section className="report-detail-section">
+              <h3>내용</h3>
+              <p className="report-detail-content">{todoDetail.content?.trim() || "작성된 내용이 없습니다."}</p>
+            </section>
+          </div>
+        </div>
+      )}
     </AppShell>
   );
 }

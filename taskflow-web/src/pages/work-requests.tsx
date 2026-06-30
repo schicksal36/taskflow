@@ -10,6 +10,7 @@ import {
   type UserListItem,
   acceptWorkRequest,
   attachWorkRequestFile,
+  completeWorkRequest,
   approveAdminApprovalRequest,
   createWorkRequest,
   deleteWorkRequest,
@@ -17,6 +18,7 @@ import {
   downloadAllWorkRequestFiles,
   downloadWorkRequestFile,
   fetchAdminApprovalRequests,
+  fetchWorkRequest,
   fetchUsers,
   fetchWorkRequests,
   patchWorkRequestStatus,
@@ -198,9 +200,11 @@ export default function WorkRequestsPage() {
   const [attachmentFiles, setAttachmentFiles] = useState<File[]>([]);
   const [form, setForm] = useState<WorkRequestInput>(emptyForm);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [detailTarget, setDetailTarget] = useState<WorkRequest | null>(null);
   const [message, setMessage] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [isDetailLoading, setIsDetailLoading] = useState(false);
 
   async function loadItems() {
     if (!accessToken) {
@@ -400,6 +404,9 @@ export default function WorkRequestsPage() {
       } else {
         saved = await createWorkRequest(accessToken, cleanInput(form));
       }
+      if (!saved.id) {
+        throw new Error("업무요청 저장 응답에 ID가 없습니다.");
+      }
       for (const file of attachmentFiles) {
         const media = await uploadMediaFile(accessToken, file, { target_app: "WORK_REQUESTS", target_id: saved.id });
         await attachWorkRequestFile(accessToken, saved.id, media.id);
@@ -436,7 +443,11 @@ export default function WorkRequestsPage() {
     setMessage("");
 
     try {
-      await patchWorkRequestStatus(accessToken, id, status);
+      if (status === "COMPLETED") {
+        await completeWorkRequest(accessToken, id);
+      } else {
+        await patchWorkRequestStatus(accessToken, id, status);
+      }
       await loadItems();
     } catch (error) {
       setMessage(describeApiError(error));
@@ -498,6 +509,73 @@ export default function WorkRequestsPage() {
     } catch (error) {
       setMessage(describeApiError(error));
     }
+  }
+
+  async function handleOpenDetail(id: number) {
+    if (!accessToken) {
+      return;
+    }
+
+    setIsDetailLoading(true);
+    setMessage("");
+    try {
+      setDetailTarget(await fetchWorkRequest(accessToken, id));
+    } catch (error) {
+      setMessage(describeApiError(error));
+    } finally {
+      setIsDetailLoading(false);
+    }
+  }
+
+  function renderAssigneeNames(item: WorkRequest) {
+    if (item.assignee_names?.length) {
+      return item.assignee_names.join(", ");
+    }
+    return item.assignee_name || "-";
+  }
+
+  function renderAttachmentPresence(files?: WorkRequest["files"]) {
+    return files?.length ? "있음" : "없음";
+  }
+
+  function renderDetailFiles(item: WorkRequest) {
+    if (!item.files?.length) {
+      return <p className="report-detail-empty">첨부파일이 없습니다.</p>;
+    }
+    return (
+      <div className="attachment-list">
+        {item.files.map((file) => (
+          <button className="text-button" key={file.id} onClick={() => handleDownloadFile(item, file.id, file.original_name)} type="button">
+            {file.original_name || `첨부파일 ${file.id}`}
+          </button>
+        ))}
+        {item.files.length > 1 && (
+          <button className="ghost-button" onClick={() => handleDownloadAllFiles(item)} type="button">
+            전체 다운로드
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  function renderReadRecords(item: WorkRequest) {
+    if (!item.read_records?.length) {
+      return <p className="report-detail-empty">열람 기록이 없습니다.</p>;
+    }
+    return (
+      <div className="recipient-detail-status-list">
+        {item.read_records.map((record) => {
+          const label = [record.department, record.position].filter(Boolean).join(" / ");
+          return (
+            <div key={record.id}>
+              <strong>{record.name}{label ? ` (${label})` : ""}</strong>
+              <span>{record.is_read ? "읽음" : "안읽음"}</span>
+              {record.read_at && <small>{formatDateTime(record.read_at)}</small>}
+            </div>
+          );
+        })}
+      </div>
+    );
   }
 
   async function handleApprovalApprove(id: number) {
@@ -686,10 +764,11 @@ export default function WorkRequestsPage() {
             <span>{isLoading ? "조회 중" : `${items.length}건`}</span>
           </div>
           <div className="table-wrap">
-            <table>
+            <table className="report-table work-request-table">
               <thead>
                 <tr>
                   <th>제목</th>
+                  <th>요청자</th>
                   <th>담당자</th>
                   <th>상태</th>
                   <th>우선순위</th>
@@ -699,65 +778,68 @@ export default function WorkRequestsPage() {
                 </tr>
               </thead>
               <tbody>
-                {items.map((item) => (
-                  <tr key={item.id}>
-                    <td>{item.title}</td>
-                    <td>{item.assignee_names?.length ? item.assignee_names.join(", ") : item.assignee_name || "-"}</td>
-                    <td>
-                      {item.status === "PENDING" ? (
-                        <span>{labelOf(workStatusLabels, item.status)}</span>
-                      ) : (
-                        <select
-                          aria-label={`${item.title} 상태`}
-                          onChange={(event) => handleStatus(item.id, event.target.value)}
-                          value={item.status}
-                        >
-                          {Object.entries(workStatusLabels).map(([value, label]) => (
-                            <option key={value} value={value}>
-                              {label}
-                            </option>
-                          ))}
-                        </select>
-                      )}
-                    </td>
-                    <td>{labelOf(priorityLabels, item.priority)}</td>
-                    <td>{formatDateTime(item.deadline_at)}</td>
-                    <td className="table-actions">
-                      {item.files?.map((file) => (
-                        <button className="ghost-button" key={file.id} onClick={() => handleDownloadFile(item, file.id, file.original_name)} type="button">
-                          {file.original_name || "다운로드"}
+                {items.map((item) => {
+                  const isRequester = item.requester === user?.id;
+                  const isAssignee = item.assignee === user?.id || item.assignee_ids?.includes(user?.id ?? -1);
+                  const canRespond = item.status === "PENDING" && isAssignee;
+                  return (
+                    <tr key={item.id}>
+                      <td>
+                        <button className="table-title-button" onClick={() => handleOpenDetail(item.id)} type="button">
+                          {item.title}
                         </button>
-                      ))}
-                      {!!item.files?.length && (
-                        <button className="ghost-button" onClick={() => handleDownloadAllFiles(item)} type="button">
-                          전체
-                        </button>
-                      )}
-                      {!item.files?.length && "-"}
-                    </td>
-                    <td className="table-actions">
-                      {item.status === "PENDING" && (item.assignee === user?.id || item.assignee_ids?.includes(user?.id ?? -1)) && (
-                        <>
-                          <button className="primary-button" onClick={() => handleAccept(item.id)} type="button">
-                            수락
-                          </button>
-                          <button className="ghost-button" onClick={() => handleReject(item.id)} type="button">
-                            거절
-                          </button>
-                        </>
-                      )}
-                      <button className="ghost-button" onClick={() => startEdit(item)} type="button">
-                        수정
-                      </button>
-                      <button className="danger-button" onClick={() => handleDelete(item.id)} type="button">
-                        삭제
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                      <td>{item.requester_name || "-"}</td>
+                      <td>{renderAssigneeNames(item)}</td>
+                      <td>
+                        {item.status === "PENDING" || !isAssignee ? (
+                          <span>{labelOf(workStatusLabels, item.status)}</span>
+                        ) : (
+                          <select
+                            aria-label={`${item.title} 상태`}
+                            onChange={(event) => handleStatus(item.id, event.target.value)}
+                            value={item.status}
+                          >
+                            {Object.entries(workStatusLabels).map(([value, label]) => (
+                              <option key={value} value={value}>
+                                {label}
+                              </option>
+                            ))}
+                          </select>
+                        )}
+                      </td>
+                      <td>{labelOf(priorityLabels, item.priority)}</td>
+                      <td>{formatDateTime(item.deadline_at)}</td>
+                      <td>{renderAttachmentPresence(item.files)}</td>
+                      <td className="table-actions">
+                        {canRespond && (
+                          <>
+                            <button className="primary-button" onClick={() => handleAccept(item.id)} type="button">
+                              수락
+                            </button>
+                            <button className="ghost-button" onClick={() => handleReject(item.id)} type="button">
+                              거절
+                            </button>
+                          </>
+                        )}
+                        {isRequester && (
+                          <>
+                            <button className="ghost-button" onClick={() => startEdit(item)} type="button">
+                              수정
+                            </button>
+                            <button className="danger-button" onClick={() => handleDelete(item.id)} type="button">
+                              삭제
+                            </button>
+                          </>
+                        )}
+                        {!canRespond && !isRequester && "-"}
+                      </td>
+                    </tr>
+                  );
+                })}
                 {!items.length && (
                   <tr>
-                    <td colSpan={7}>조회된 업무요청이 없습니다.</td>
+                    <td colSpan={8}>조회된 업무요청이 없습니다.</td>
                   </tr>
                 )}
               </tbody>
@@ -765,6 +847,70 @@ export default function WorkRequestsPage() {
           </div>
         </section>
       </section>
+
+      {isDetailLoading && (
+        <div className="modal-backdrop">
+          <div className="modal-panel report-detail-modal">
+            <p className="report-detail-loading">업무요청을 불러오는 중입니다.</p>
+          </div>
+        </div>
+      )}
+
+      {detailTarget && !isDetailLoading && (
+        <div className="modal-backdrop">
+          <div className="modal-panel report-detail-modal">
+            <div className="panel-head">
+              <h2>업무요청 내용</h2>
+              <button className="ghost-button" onClick={() => setDetailTarget(null)} type="button">
+                닫기
+              </button>
+            </div>
+
+            <div className="report-detail-head">
+              <strong>{detailTarget.title}</strong>
+              <span>{labelOf(workStatusLabels, detailTarget.status)}</span>
+            </div>
+
+            <dl className="report-detail-meta">
+              <div>
+                <dt>유형</dt>
+                <dd>업무요청</dd>
+              </div>
+              <div>
+                <dt>요청자</dt>
+                <dd>{detailTarget.requester_name || "-"}</dd>
+              </div>
+              <div>
+                <dt>담당자</dt>
+                <dd>{renderAssigneeNames(detailTarget)}</dd>
+              </div>
+              <div>
+                <dt>우선순위</dt>
+                <dd>{labelOf(priorityLabels, detailTarget.priority)}</dd>
+              </div>
+              <div>
+                <dt>마감일</dt>
+                <dd>{formatDateTime(detailTarget.deadline_at)}</dd>
+              </div>
+            </dl>
+
+            <section className="report-detail-section">
+              <h3>내용</h3>
+              <p className="report-detail-content">{detailTarget.content?.trim() || "작성된 내용이 없습니다."}</p>
+            </section>
+
+            <section className="report-detail-section">
+              <h3>첨부</h3>
+              {renderDetailFiles(detailTarget)}
+            </section>
+
+            <section className="report-detail-section">
+              <h3>열람 상태</h3>
+              {renderReadRecords(detailTarget)}
+            </section>
+          </div>
+        </div>
+      )}
     </AppShell>
   );
 }

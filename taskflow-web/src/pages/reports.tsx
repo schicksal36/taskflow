@@ -9,35 +9,45 @@
  * 사용 API: GET/POST /api/reports/, POST /api/reports/{id}/submit|confirm|return|resubmit/
  */
 import { useRouter } from "next/router";
-import { FormEvent, KeyboardEvent, useEffect, useState } from "react";
+import { FormEvent, KeyboardEvent, useEffect, useMemo, useState } from "react";
 
 import { AppShell } from "@/components/AppShell";
+import { StatCard } from "@/components/StatCard";
 import { useAuth } from "@/contexts/AuthContext";
 import {
+  type ExpenseItemInput,
+  type ExpenseWorkflowStatus,
   type Report,
   type ReportInput,
   type ReportFile,
   type UserListItem,
+  approveExpenseReport,
   attachReportFile,
+  bulkUpdateExpenseStatus,
   cancelReport,
   confirmReport,
+  completeExpenseSettlement,
   createReport,
   deleteReport,
   describeApiError,
   downloadReportFile,
+  fetchReport,
   fetchReports,
+  fetchUsers,
+  rejectExpenseReport,
   resubmitReport,
   returnReport,
   searchUsers,
+  settleExpenseReport,
   submitReport,
   toArray,
   updateReport,
   uploadMediaFile,
 } from "@/lib/api";
-import { formatDate, formatDateTime, todayString } from "@/lib/format";
-import { labelOf, reportStatusLabels } from "@/lib/labels";
+import { formatDate, formatDateTime, formatMoney, todayString } from "@/lib/format";
+import { expenseCategoryLabels, labelOf, paymentMethodLabels, reportStatusLabels, reportTypeLabels } from "@/lib/labels";
 
-const visibleReportTypes = new Set(["DAILY_REPORT", "WORK_REPORT"]);
+const visibleReportTypes = new Set(["DAILY_REPORT", "WORK_REPORT", "EXPENSE_REPORT"]);
 
 const emptyForm: ReportInput = {
   report_type: "WORK_REPORT",
@@ -48,10 +58,59 @@ const emptyForm: ReportInput = {
   recipient_ids: [],
 };
 
+const emptyExpenseItem: ExpenseItemInput = {
+  expense_date: todayString(),
+  category: "MEAL",
+  description: "",
+  amount: "",
+  payment_method: "CARD",
+};
+
 function userLabel(user: UserListItem) {
   const name = user.display_name || user.email;
   const details = [user.department, user.position].filter(Boolean);
   return details.length ? `${name} (${details.join(" / ")})` : name;
+}
+
+function recipientLabel(recipient: NonNullable<Report["recipients"]>[number]) {
+  const details = [recipient.department, recipient.position].filter(Boolean);
+  return details.length ? `${recipient.name} (${details.join(" / ")})` : recipient.name;
+}
+
+function amountOf(value?: string | number | null) {
+  const amount = Number(value ?? 0);
+  return Number.isFinite(amount) ? amount : 0;
+}
+
+function monthKeyOf(value?: string | null) {
+  return value?.slice(0, 7) || "날짜 없음";
+}
+
+function monthLabelOf(value: string) {
+  if (value === "날짜 없음") {
+    return value;
+  }
+  const [year, month] = value.split("-");
+  return `${year}년 ${Number(month)}월`;
+}
+
+function buildSettlementSummary(reports: Report[]) {
+  const settledReports = reports.filter((item) => item.report_type === "EXPENSE_REPORT" && item.status === "SETTLED");
+  const currentMonth = todayString().slice(0, 7);
+  const monthlyMap = settledReports.reduce<Record<string, number>>((result, item) => {
+    const key = monthKeyOf(item.report_date);
+    result[key] = (result[key] ?? 0) + amountOf(item.total_amount);
+    return result;
+  }, {});
+
+  return {
+    currentMonth,
+    currentMonthTotal: monthlyMap[currentMonth] ?? 0,
+    total: settledReports.reduce((sum, item) => sum + amountOf(item.total_amount), 0),
+    monthly: Object.entries(monthlyMap)
+      .sort(([left], [right]) => right.localeCompare(left))
+      .map(([month, amount]) => ({ month, amount })),
+  };
 }
 
 export default function ReportsPage() {
@@ -69,6 +128,7 @@ export default function ReportsPage() {
   const { accessToken, user } = useAuth();
   const [items, setItems] = useState<Report[]>([]);
   const [form, setForm] = useState<ReportInput>(emptyForm);
+  const [expenseItem, setExpenseItem] = useState<ExpenseItemInput>(emptyExpenseItem);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [selectedRecipients, setSelectedRecipients] = useState<UserListItem[]>([]);
   const [manualRecipients, setManualRecipients] = useState<string[]>([]);
@@ -76,23 +136,73 @@ export default function ReportsPage() {
   const [recipientResults, setRecipientResults] = useState<UserListItem[]>([]);
   const [reportAttachment, setReportAttachment] = useState<File | null>(null);
   const [returnTarget, setReturnTarget] = useState<Report | null>(null);
+  const [detailTarget, setDetailTarget] = useState<Report | null>(null);
+  const [expenseDetailTarget, setExpenseDetailTarget] = useState<Report | null>(null);
   const [returnReason, setReturnReason] = useState("");
+  const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [isDetailLoading, setIsDetailLoading] = useState(false);
   const [searchInput, setSearchInput] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  const [reportTypeFilter, setReportTypeFilter] = useState("");
+  const [departmentFilter, setDepartmentFilter] = useState("");
+  const [writerFilter, setWriterFilter] = useState("");
+  const [reportUsers, setReportUsers] = useState<UserListItem[]>([]);
+  const [selectedExpenseIds, setSelectedExpenseIds] = useState<number[]>([]);
+  const [bulkExpenseStatus, setBulkExpenseStatus] = useState<ExpenseWorkflowStatus>("APPROVED");
+  const [bulkRejectReason, setBulkRejectReason] = useState("");
+  const [managerView, setManagerView] = useState<"pending" | "expense" | "all">("pending");
 
   const isExecutive = user?.role === "CEO" || user?.role === "SUPERUSER";
-  const sentReports = isExecutive ? [] : items.filter((item) => item.writer === user?.id);
+  const isManagerView = isExecutive || user?.role === "ADMIN";
+  const departmentOptions = useMemo(
+    () => Array.from(new Set(reportUsers.map((entry) => entry.department).filter(Boolean) as string[])).sort((left, right) => left.localeCompare(right)),
+    [reportUsers],
+  );
+  const writerOptions = useMemo(
+    () =>
+      reportUsers
+        .filter((entry) => !departmentFilter || entry.department === departmentFilter)
+        .sort((left, right) => (left.display_name || left.email).localeCompare(right.display_name || right.email)),
+    [departmentFilter, reportUsers],
+  );
+  const filteredReports = items.filter((item) => !reportTypeFilter || item.report_type === reportTypeFilter);
+  const sentReports = isExecutive ? [] : filteredReports.filter((item) => item.writer === user?.id);
+  const sentExpenseReports = sentReports.filter((item) => item.report_type === "EXPENSE_REPORT");
   const receivedReports = isExecutive
-    ? items.filter((item) => !["DRAFT", "CANCELED"].includes(item.status))
-    : items.filter(
+    ? filteredReports.filter((item) => !["DRAFT", "CANCELED"].includes(item.status))
+    : filteredReports.filter(
         (item) =>
+          item.approver === user?.id ||
           item.recipient_ids?.includes(user?.id ?? -1) ||
           item.recipients?.some((recipient) => recipient.recipient === user?.id),
       );
+  const visibleReceivedReports = useMemo(() => {
+    if (!isManagerView) {
+      return receivedReports;
+    }
+    if (managerView === "pending") {
+      return receivedReports.filter((item) => item.status === "SUBMITTED");
+    }
+    if (managerView === "expense") {
+      return receivedReports.filter((item) => item.report_type === "EXPENSE_REPORT" && !["DRAFT", "CANCELED", "REJECTED"].includes(item.status));
+    }
+    return receivedReports;
+  }, [isManagerView, managerView, receivedReports]);
+  const manageableExpenseReports = visibleReceivedReports.filter((item) => item.report_type === "EXPENSE_REPORT" && item.writer !== user?.id);
+  const selectedManageableExpenseReports = manageableExpenseReports.filter((item) => selectedExpenseIds.includes(item.id));
+  const settlementSummary = useMemo(() => buildSettlementSummary(sentExpenseReports), [sentExpenseReports]);
+  const managerSettlementSummary = useMemo(() => buildSettlementSummary(receivedReports), [receivedReports]);
+  const managerSummary = useMemo(() => ({
+    pendingReports: receivedReports.filter((item) => item.report_type !== "EXPENSE_REPORT" && item.status === "SUBMITTED").length,
+    pendingExpenses: receivedReports.filter((item) => item.report_type === "EXPENSE_REPORT" && item.status === "SUBMITTED").length,
+    approvedExpenses: receivedReports.filter((item) => item.report_type === "EXPENSE_REPORT" && item.status === "APPROVED").length,
+    settlingExpenses: receivedReports.filter((item) => item.report_type === "EXPENSE_REPORT" && ["SETTLING", "REVIEWING"].includes(item.status)).length,
+    settledExpenses: receivedReports.filter((item) => item.report_type === "EXPENSE_REPORT" && item.status === "SETTLED").length,
+  }), [receivedReports]);
 
   async function loadItems() {
     /**
@@ -112,7 +222,12 @@ export default function ReportsPage() {
     setMessage("");
 
     try {
-      const response = await fetchReports(accessToken, searchTerm, { status: statusFilter });
+      const response = await fetchReports(accessToken, searchTerm, {
+        status: statusFilter,
+        report_type: reportTypeFilter,
+        writer: writerFilter,
+        department: departmentFilter,
+      });
       setItems(toArray(response).filter((item) => visibleReportTypes.has(item.report_type)));
     } catch (error) {
       setMessage(describeApiError(error));
@@ -125,28 +240,69 @@ export default function ReportsPage() {
     loadItems();
     // loadItems는 저장/삭제/제출 후에도 재사용하는 함수라 effect 의존성만 고정합니다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [accessToken, searchTerm, statusFilter]);
+  }, [accessToken, searchTerm, statusFilter, reportTypeFilter, writerFilter, departmentFilter]);
+
+  useEffect(() => {
+    async function loadReportUsers() {
+      if (!accessToken || !isManagerView) {
+        setReportUsers([]);
+        return;
+      }
+
+      try {
+        setReportUsers(toArray(await fetchUsers(accessToken)));
+      } catch {
+        setReportUsers([]);
+      }
+    }
+
+    loadReportUsers();
+  }, [accessToken, isManagerView]);
 
   useEffect(() => {
     if (router.query.mode === "create") {
       resetForm();
+      setIsEditorOpen(true);
     }
-  }, [router.query.mode]);
+    if (router.query.type === "expense") {
+      setReportTypeFilter("EXPENSE_REPORT");
+      setForm((current) => ({ ...current, report_type: "EXPENSE_REPORT" }));
+    }
+  }, [router.query.mode, router.query.type]);
 
   function resetForm() {
     setEditingId(null);
     setForm(emptyForm);
+    setExpenseItem(emptyExpenseItem);
     setSelectedRecipients([]);
     setManualRecipients([]);
     setRecipientSearch("");
     setRecipientResults([]);
     setReportAttachment(null);
+    setIsEditorOpen(false);
+  }
+
+  function openCreateForm() {
+    if (isEditorOpen) {
+      resetForm();
+      return;
+    }
+    setEditingId(null);
+    setForm(emptyForm);
+    setExpenseItem(emptyExpenseItem);
+    setSelectedRecipients([]);
+    setManualRecipients([]);
+    setRecipientSearch("");
+    setRecipientResults([]);
+    setReportAttachment(null);
+    setIsEditorOpen(true);
   }
 
   function startEdit(item: Report) {
     setEditingId(item.id);
+    setIsEditorOpen(true);
     setForm({
-      report_type: "WORK_REPORT",
+      report_type: item.report_type === "EXPENSE_REPORT" ? "EXPENSE_REPORT" : "WORK_REPORT",
       title: item.title,
       content: item.content ?? "",
       report_date: item.report_date,
@@ -167,6 +323,16 @@ export default function ReportsPage() {
     setRecipientSearch("");
     setRecipientResults([]);
     setReportAttachment(null);
+    const firstExpenseItem = item.expense_items?.[0];
+    setExpenseItem(firstExpenseItem
+      ? {
+          expense_date: firstExpenseItem.expense_date,
+          category: firstExpenseItem.category,
+          description: firstExpenseItem.description,
+          amount: firstExpenseItem.amount,
+          payment_method: firstExpenseItem.payment_method,
+        }
+      : emptyExpenseItem);
   }
 
   async function handleRecipientSearch(value: string) {
@@ -255,7 +421,19 @@ export default function ReportsPage() {
     setMessage("");
 
     try {
-      const payload = { ...form, report_type: "WORK_REPORT", recipient_inputs: manualRecipients };
+      const isExpense = form.report_type === "EXPENSE_REPORT";
+      const payload: ReportInput = {
+        ...form,
+        report_type: isExpense ? "EXPENSE_REPORT" : "WORK_REPORT",
+        recipient_inputs: manualRecipients,
+        approver: form.recipient_ids?.[0] ?? form.approver ?? null,
+      };
+      if (isExpense) {
+        payload.total_amount = expenseItem.amount || 0;
+        payload.expense_items = expenseItem.amount || expenseItem.description
+          ? [{ ...expenseItem, description: expenseItem.description || form.title }]
+          : [];
+      }
       let savedReport: Report;
       if (editingId) {
         savedReport = await updateReport(accessToken, editingId, payload);
@@ -299,6 +477,42 @@ export default function ReportsPage() {
     }
   }
 
+  async function handleOpenReportDetail(id: number) {
+    if (!accessToken) {
+      return;
+    }
+
+    setIsDetailLoading(true);
+    setMessage("");
+    try {
+      const report = await fetchReport(accessToken, id);
+      setDetailTarget(report);
+      await loadItems();
+    } catch (error) {
+      setMessage(describeApiError(error));
+    } finally {
+      setIsDetailLoading(false);
+    }
+  }
+
+  async function handleOpenExpenseDetail(id: number) {
+    if (!accessToken) {
+      return;
+    }
+
+    setIsDetailLoading(true);
+    setMessage("");
+    try {
+      const report = await fetchReport(accessToken, id);
+      setExpenseDetailTarget(report);
+      await loadItems();
+    } catch (error) {
+      setMessage(describeApiError(error));
+    } finally {
+      setIsDetailLoading(false);
+    }
+  }
+
   function renderReportFiles(files?: ReportFile[]) {
     if (!files?.length) {
       return null;
@@ -314,6 +528,10 @@ export default function ReportsPage() {
     );
   }
 
+  function renderAttachmentPresence(files?: ReportFile[]) {
+    return files?.length ? "있음" : "없음";
+  }
+
   function renderRecipientNames(item: Report) {
     if (!item.recipients?.length) {
       return "-";
@@ -321,7 +539,7 @@ export default function ReportsPage() {
     return (
       <div className="recipient-status-list">
         {item.recipients.map((recipient) => (
-          <span key={recipient.id}>{recipient.name}</span>
+          <span key={recipient.id}>{recipientLabel(recipient)}</span>
         ))}
       </div>
     );
@@ -336,14 +554,73 @@ export default function ReportsPage() {
         {item.recipients.map((recipient) => (
           <span key={recipient.id}>
             {recipient.confirmed_at
-              ? `확인완료 ${formatDateTime(recipient.confirmed_at)}`
+              ? "확인완료"
               : recipient.returned_at
-                ? `보완요청 ${recipient.return_reason || ""}`
+                ? "보완요청"
                 : recipient.is_read
-                  ? `읽음 ${formatDateTime(recipient.read_at)}`
+                  ? "읽음"
                   : "안읽음"}
           </span>
         ))}
+      </div>
+    );
+  }
+
+  function renderRecipientDetailStatuses(item: Report) {
+    if (!item.recipients?.length) {
+      return <p className="report-detail-empty">수신자가 없습니다.</p>;
+    }
+    return (
+      <div className="recipient-detail-status-list">
+        {item.recipients.map((recipient) => {
+          const status = recipient.confirmed_at
+            ? "확인완료"
+            : recipient.returned_at
+              ? "보완요청"
+              : recipient.is_read
+                ? "읽음"
+                : "안읽음";
+          const statusTime = recipient.confirmed_at || recipient.returned_at || recipient.read_at;
+          return (
+            <div key={recipient.id}>
+              <strong>{recipientLabel(recipient)}</strong>
+              <span>{status}</span>
+              <small>{statusTime ? formatDateTime(statusTime) : "수신 시간 없음"}</small>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  function renderExpenseItems(item: Report) {
+    if (!item.expense_items?.length) {
+      return <p className="report-detail-empty">등록된 경비지출 항목이 없습니다.</p>;
+    }
+    return (
+      <div className="table-wrap">
+        <table className="report-table expense-item-table">
+          <thead>
+            <tr>
+              <th>사용일</th>
+              <th>분류</th>
+              <th>지출처</th>
+              <th>금액</th>
+              <th>결제수단</th>
+            </tr>
+          </thead>
+          <tbody>
+            {item.expense_items.map((expense) => (
+              <tr key={expense.id}>
+                <td>{formatDate(expense.expense_date)}</td>
+                <td>{labelOf(expenseCategoryLabels, expense.category)}</td>
+                <td>{expense.description || "-"}</td>
+                <td>{formatMoney(expense.amount)}</td>
+                <td>{labelOf(paymentMethodLabels, expense.payment_method)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     );
   }
@@ -382,6 +659,42 @@ export default function ReportsPage() {
 
     try {
       await confirmReport(accessToken, id);
+      await loadItems();
+    } catch (error) {
+      setMessage(describeApiError(error));
+    }
+  }
+
+  async function handleApproveExpense(id: number) {
+    if (!accessToken) {
+      return;
+    }
+    try {
+      await approveExpenseReport(accessToken, id);
+      await loadItems();
+    } catch (error) {
+      setMessage(describeApiError(error));
+    }
+  }
+
+  async function handleSettleExpense(id: number) {
+    if (!accessToken) {
+      return;
+    }
+    try {
+      await settleExpenseReport(accessToken, id);
+      await loadItems();
+    } catch (error) {
+      setMessage(describeApiError(error));
+    }
+  }
+
+  async function handleCompleteExpenseSettlement(id: number) {
+    if (!accessToken) {
+      return;
+    }
+    try {
+      await completeExpenseSettlement(accessToken, id);
       await loadItems();
     } catch (error) {
       setMessage(describeApiError(error));
@@ -427,7 +740,11 @@ export default function ReportsPage() {
     }
 
     try {
-      await returnReport(accessToken, returnTarget.id, returnReason);
+      if (returnTarget.report_type === "EXPENSE_REPORT") {
+        await rejectExpenseReport(accessToken, returnTarget.id, returnReason);
+      } else {
+        await returnReport(accessToken, returnTarget.id, returnReason);
+      }
       setReturnTarget(null);
       setReturnReason("");
       await loadItems();
@@ -446,118 +763,82 @@ export default function ReportsPage() {
     setSearchTerm("");
   }
 
+  function toggleExpenseSelection(id: number) {
+    setSelectedExpenseIds((current) => current.includes(id) ? current.filter((entry) => entry !== id) : [...current, id]);
+  }
+
+  function toggleAllManageableExpenses() {
+    const ids = manageableExpenseReports.map((item) => item.id);
+    setSelectedExpenseIds((current) => {
+      const selectedSet = new Set(current);
+      const allSelected = ids.length > 0 && ids.every((id) => selectedSet.has(id));
+      if (allSelected) {
+        return current.filter((id) => !ids.includes(id));
+      }
+      return Array.from(new Set([...current, ...ids]));
+    });
+  }
+
+  async function handleBulkExpenseStatus() {
+    if (!accessToken || !selectedManageableExpenseReports.length) {
+      return;
+    }
+    try {
+      await bulkUpdateExpenseStatus(accessToken, selectedManageableExpenseReports.map((item) => item.id), bulkExpenseStatus, bulkRejectReason);
+      setSelectedExpenseIds([]);
+      setBulkRejectReason("");
+      await loadItems();
+    } catch (error) {
+      setMessage(describeApiError(error));
+    }
+  }
+
   return (
-    <AppShell title="업무보고" description="업무보고를 작성하고 수신자 확인 상태를 관리합니다.">
+    <AppShell
+      title="보고관리"
+      description="업무보고와 경비지출을 한 화면에서 작성하고 확인 상태를 관리합니다."
+      actions={
+        !isExecutive && (
+          <button className={isEditorOpen ? "ghost-button" : "primary-button"} onClick={openCreateForm} type="button">
+            {isEditorOpen ? "보고 작성 닫기" : "보고 작성"}
+          </button>
+        )
+      }
+    >
       {message && <p className="notice error">{message}</p>}
 
-      <section className={isExecutive ? "editor-layout-equal" : "editor-layout"}>
-        {!isExecutive && (
-          <form className="panel form-stack" onSubmit={handleSubmit}>
-            <div className="panel-head">
-              <h2>{editingId ? "업무보고 수정" : "업무보고 작성"}</h2>
-              {editingId && (
-                <button className="ghost-button" onClick={resetForm} type="button">
-                  취소
-                </button>
-              )}
-            </div>
+      {isManagerView && (
+        <section className="stat-grid report-manager-stats">
+          <StatCard label="보고 확인대기" value={managerSummary.pendingReports} tone="blue" />
+          <StatCard label="경비 승인대기" value={managerSummary.pendingExpenses} tone="orange" />
+          <StatCard label="승인 후 대기" value={managerSummary.approvedExpenses} tone="green" />
+          <StatCard label="정산중" value={managerSummary.settlingExpenses} tone="purple" />
+          <StatCard label="정산완료" value={managerSummary.settledExpenses} tone="blue" />
+        </section>
+      )}
 
-            <label>
-              <span>보고일</span>
-              <input
-                onChange={(event) => setForm((current) => ({ ...current, report_date: event.target.value }))}
-                required
-                type="date"
-                value={form.report_date}
-              />
-            </label>
-
-            <label className="assignee-search">
-              <span>수신자</span>
-              <div className="inline-entry">
-                <input
-                  onChange={(event) => handleRecipientSearch(event.target.value)}
-                  onKeyDown={handleManualRecipientKeyDown}
-                  placeholder="이름, 이메일, 부서, 직함 검색 또는 직접 입력"
-                  value={recipientSearch}
-                />
-                <button className="ghost-button" onClick={addManualRecipients} type="button">
-                  추가
-                </button>
-              </div>
-              {!!recipientResults.length && (
-                <div className="assignee-dropdown">
-                    {recipientResults.map((entry) => (
-                      <button key={entry.id} onClick={() => selectRecipient(entry)} type="button">
-                        {userLabel(entry)}
-                      </button>
-                    ))}
-                </div>
-              )}
-            </label>
-
-            <div className="recipient-picker">
-              {manualRecipients.map((recipient) => (
-                <button className="recipient-option manual" key={recipient} onClick={() => removeManualRecipient(recipient)} type="button">
-                  직접: {recipient}
-                </button>
-              ))}
-              {selectedRecipients.map((recipient) => (
-                <button className="recipient-option" key={recipient.id} onClick={() => removeRecipient(recipient.id)} type="button">
-                  {userLabel(recipient)}
-                </button>
-              ))}
-            </div>
-
-            <label>
-              <span>제목</span>
-              <input
-                onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))}
-                required
-                value={form.title}
-              />
-            </label>
-
-            <label>
-              <span>내용</span>
-              <textarea
-                onChange={(event) => setForm((current) => ({ ...current, content: event.target.value }))}
-                rows={8}
-                value={form.content}
-              />
-            </label>
-
-            <label>
-              <span>파일 첨부</span>
-              <input
-                onChange={(event) => setReportAttachment(event.target.files?.[0] ?? null)}
-                type="file"
-              />
-              {reportAttachment && (
-                <button className="text-button" onClick={() => setReportAttachment(null)} type="button">
-                  선택 해제: {reportAttachment.name}
-                </button>
-              )}
-            </label>
-
-            <button className="primary-button" disabled={isSaving} type="submit">
-              {isSaving ? "저장 중" : editingId ? "수정" : "등록"}
-            </button>
-          </form>
-        )}
-
+      <section className="editor-layout collapsed">
         <section className="panel">
           <div className="panel-head">
-            <h2>업무보고 목록</h2>
-            <span>{isLoading ? "조회 중" : `${items.length}건`}</span>
+            <h2>보고 목록</h2>
+            <div className="panel-actions">
+              <span>{isLoading ? "조회 중" : `${filteredReports.length}건`}</span>
+            </div>
           </div>
-          <form className="list-filter-bar" onSubmit={handleSearch}>
+          <form className={`list-filter-bar report-filter-bar${isManagerView ? " manager-report-filter" : ""}`} onSubmit={handleSearch}>
             <label className="search-field">
               <input
                 onChange={(event) => setSearchInput(event.target.value)}
                 placeholder="제목, 내용, 작성자 검색"
                 value={searchInput}
               />
+            </label>
+            <label className="filter-field">
+              <select onChange={(event) => setReportTypeFilter(event.target.value)} value={reportTypeFilter}>
+                <option value="">유형 전체</option>
+                <option value="WORK_REPORT">업무보고</option>
+                <option value="EXPENSE_REPORT">경비지출</option>
+              </select>
             </label>
             <label className="filter-field">
               <select onChange={(event) => setStatusFilter(event.target.value)} value={statusFilter}>
@@ -569,16 +850,49 @@ export default function ReportsPage() {
                 ))}
               </select>
             </label>
+            {isManagerView && (
+              <>
+                <label className="filter-field">
+                  <select
+                    onChange={(event) => {
+                      setDepartmentFilter(event.target.value);
+                      setWriterFilter("");
+                    }}
+                    value={departmentFilter}
+                  >
+                    <option value="">부서 전체</option>
+                    {departmentOptions.map((department) => (
+                      <option key={department} value={department}>
+                        {department}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="filter-field">
+                  <select onChange={(event) => setWriterFilter(event.target.value)} value={writerFilter}>
+                    <option value="">작성자 전체</option>
+                    {writerOptions.map((entry) => (
+                      <option key={entry.id} value={entry.id}>
+                        {userLabel(entry)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </>
+            )}
             <div className="table-actions">
               <button className="primary-button" type="submit">
                 검색
               </button>
-              {(searchTerm || statusFilter) && (
+              {(searchTerm || statusFilter || reportTypeFilter || departmentFilter || writerFilter) && (
                 <button
                   className="ghost-button"
                   onClick={() => {
                     clearSearch();
                     setStatusFilter("");
+                    setReportTypeFilter("");
+                    setDepartmentFilter("");
+                    setWriterFilter("");
                   }}
                   type="button"
                 >
@@ -591,10 +905,12 @@ export default function ReportsPage() {
           {!isExecutive && (
             <div className="table-wrap">
               <h3 className="table-title">보낸 보고서</h3>
-              <table>
+              <table className="report-table sent-report-table">
                 <thead>
                   <tr>
                     <th>제목</th>
+                    <th>유형</th>
+                    <th>첨부</th>
                     <th>상태</th>
                     <th>보고일</th>
                     <th>수신자</th>
@@ -606,9 +922,12 @@ export default function ReportsPage() {
                   {sentReports.map((item) => (
                     <tr key={item.id}>
                       <td>
-                        {item.title}
-                        {renderReportFiles(item.files)}
+                        <button className="table-title-button" onClick={() => handleOpenReportDetail(item.id)} type="button">
+                          {item.title}
+                        </button>
                       </td>
+                      <td>{labelOf(reportTypeLabels, item.report_type)}</td>
+                      <td>{renderAttachmentPresence(item.files)}</td>
                       <td>{labelOf(reportStatusLabels, item.status)}</td>
                       <td>{formatDate(item.report_date)}</td>
                       <td>{renderRecipientNames(item)}</td>
@@ -642,7 +961,7 @@ export default function ReportsPage() {
                   ))}
                   {!sentReports.length && (
                     <tr>
-                      <td colSpan={6}>보낸 보고서가 없습니다.</td>
+                      <td colSpan={8}>보낸 보고서가 없습니다.</td>
                     </tr>
                   )}
                 </tbody>
@@ -651,11 +970,75 @@ export default function ReportsPage() {
           )}
 
           <div className={`table-wrap${isExecutive ? "" : " stacked-table"}`}>
-            <h3 className="table-title">받은 보고서</h3>
-            <table>
+            <div className="report-section-head">
+              <h3 className="table-title">{isManagerView ? "관리자 작업대" : "받은 보고서"}</h3>
+              {isManagerView && (
+                <div className="tab-row compact-tabs">
+                  <button className={managerView === "pending" ? "active" : ""} onClick={() => setManagerView("pending")} type="button">
+                    처리대기
+                  </button>
+                  <button className={managerView === "expense" ? "active" : ""} onClick={() => setManagerView("expense")} type="button">
+                    경비정산
+                  </button>
+                  <button className={managerView === "all" ? "active" : ""} onClick={() => setManagerView("all")} type="button">
+                    전체
+                  </button>
+                </div>
+              )}
+            </div>
+            {isManagerView && (
+              <div className="manager-settlement-box">
+                <div className="expense-settlement-summary" aria-label="관리자 정산완료 금액">
+                  <span className="section-count">정산완료 {managerSummary.settledExpenses}건</span>
+                  <strong>이번 달 {formatMoney(managerSettlementSummary.currentMonthTotal)}</strong>
+                  <strong>전체 {formatMoney(managerSettlementSummary.total)}</strong>
+                </div>
+                {!!managerSettlementSummary.monthly.length && (
+                  <div className="expense-monthly-summary">
+                    {managerSettlementSummary.monthly.map((entry) => (
+                      <span key={`manager-${entry.month}`}>
+                        {monthLabelOf(entry.month)} {formatMoney(entry.amount)}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+            {!!manageableExpenseReports.length && (
+              <div className="expense-bulk-bar">
+                <label className="check-label">
+                  <input
+                    checked={manageableExpenseReports.length > 0 && manageableExpenseReports.every((item) => selectedExpenseIds.includes(item.id))}
+                    onChange={toggleAllManageableExpenses}
+                    type="checkbox"
+                  />
+                  경비지출 전체 선택
+                </label>
+                <select onChange={(event) => setBulkExpenseStatus(event.target.value as ExpenseWorkflowStatus)} value={bulkExpenseStatus}>
+                  <option value="APPROVED">승인</option>
+                  <option value="REJECTED">반려</option>
+                  <option value="SETTLING">정산중</option>
+                  <option value="SETTLED">정산완료</option>
+                </select>
+                {bulkExpenseStatus === "REJECTED" && (
+                  <input
+                    onChange={(event) => setBulkRejectReason(event.target.value)}
+                    placeholder="반려 사유"
+                    value={bulkRejectReason}
+                  />
+                )}
+                <button className="primary-button" disabled={!selectedManageableExpenseReports.length} onClick={handleBulkExpenseStatus} type="button">
+                  선택 {selectedManageableExpenseReports.length}건 변경
+                </button>
+              </div>
+            )}
+            <table className="report-table received-report-table">
               <thead>
                 <tr>
+                  <th>선택</th>
                   <th>제목</th>
+                  <th>유형</th>
+                  <th>첨부</th>
                   <th>작성자</th>
                   <th>상태</th>
                   <th>보고일</th>
@@ -664,20 +1047,53 @@ export default function ReportsPage() {
                 </tr>
               </thead>
               <tbody>
-                {receivedReports.map((item) => {
+                {visibleReceivedReports.map((item) => {
                   const myRecord = item.recipients?.find((recipient) => recipient.recipient === user?.id) ?? item.recipients?.[0];
+                  const canManageExpense = item.report_type === "EXPENSE_REPORT" && item.writer !== user?.id;
                   return (
                     <tr key={`received-${item.id}`}>
                       <td>
-                        {item.title}
-                        {renderReportFiles(item.files)}
+                        {canManageExpense ? (
+                          <input
+                            checked={selectedExpenseIds.includes(item.id)}
+                            onChange={() => toggleExpenseSelection(item.id)}
+                            type="checkbox"
+                          />
+                        ) : "-"}
                       </td>
+                      <td>
+                        <button className="table-title-button" onClick={() => handleOpenReportDetail(item.id)} type="button">
+                          {item.title}
+                        </button>
+                      </td>
+                      <td>{labelOf(reportTypeLabels, item.report_type)}</td>
+                      <td>{renderAttachmentPresence(item.files)}</td>
                       <td>{item.writer_name || "-"}</td>
                       <td>{labelOf(reportStatusLabels, item.status)}</td>
                       <td>{formatDate(item.report_date)}</td>
-                      <td>{myRecord?.is_read ? formatDateTime(myRecord.read_at) : "안읽음"}</td>
+                      <td>{myRecord?.is_read ? "읽음" : "안읽음"}</td>
                       <td className="table-actions">
-                        {item.status === "SUBMITTED" && (
+                        {item.report_type === "EXPENSE_REPORT" && item.status === "SUBMITTED" && (
+                          <>
+                            <button className="primary-button" onClick={() => handleApproveExpense(item.id)} type="button">
+                              승인
+                            </button>
+                            <button className="ghost-button" onClick={() => setReturnTarget(item)} type="button">
+                              반려
+                            </button>
+                          </>
+                        )}
+                        {item.report_type === "EXPENSE_REPORT" && item.status === "APPROVED" && (
+                          <button className="ghost-button" onClick={() => handleSettleExpense(item.id)} type="button">
+                            정산중
+                          </button>
+                        )}
+                        {item.report_type === "EXPENSE_REPORT" && ["SETTLING", "REVIEWING"].includes(item.status) && (
+                          <button className="primary-button" onClick={() => handleCompleteExpenseSettlement(item.id)} type="button">
+                            정산완료
+                          </button>
+                        )}
+                        {item.report_type !== "EXPENSE_REPORT" && item.status === "SUBMITTED" && (
                           <>
                             <button className="primary-button" onClick={() => handleConfirmReport(item.id)} type="button">
                               확인완료
@@ -691,16 +1107,330 @@ export default function ReportsPage() {
                     </tr>
                   );
                 })}
-                {!receivedReports.length && (
+                {!visibleReceivedReports.length && (
                   <tr>
-                    <td colSpan={6}>받은 보고서가 없습니다.</td>
+                    <td colSpan={9}>{isManagerView ? "현재 탭에 표시할 보고서가 없습니다." : "받은 보고서가 없습니다."}</td>
                   </tr>
                 )}
               </tbody>
             </table>
           </div>
+
+          {!isExecutive && (
+            <div className="table-wrap stacked-table">
+              <div className="report-section-head">
+                <h3 className="table-title">경비지출 내역</h3>
+                <div className="expense-settlement-summary" aria-label="정산완료 기준 받을 금액">
+                  <span className="section-count">{sentExpenseReports.length}건</span>
+                  <strong>이번 달 {formatMoney(settlementSummary.currentMonthTotal)}</strong>
+                  <strong>전체 {formatMoney(settlementSummary.total)}</strong>
+                </div>
+              </div>
+              {!!settlementSummary.monthly.length && (
+                <div className="expense-monthly-summary">
+                  {settlementSummary.monthly.map((entry) => (
+                    <span key={entry.month}>
+                      {monthLabelOf(entry.month)} {formatMoney(entry.amount)}
+                    </span>
+                  ))}
+                </div>
+              )}
+              <table className="report-table expense-history-table">
+                <thead>
+                  <tr>
+                    <th>제목</th>
+                    <th>지출처</th>
+                    <th>보고일</th>
+                    <th>금액</th>
+                    <th>상태</th>
+                    <th>수신자</th>
+                    <th>수신 상태</th>
+                    <th>항목</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sentExpenseReports.map((item) => (
+                    <tr key={`expense-history-${item.id}`}>
+                      <td>
+                        <button className="table-title-button" onClick={() => handleOpenReportDetail(item.id)} type="button">
+                          {item.title}
+                        </button>
+                      </td>
+                      <td>{item.expense_place || "-"}</td>
+                      <td>{formatDate(item.report_date)}</td>
+                      <td>{formatMoney(item.total_amount)}</td>
+                      <td>{labelOf(reportStatusLabels, item.status)}</td>
+                      <td>{renderRecipientNames(item)}</td>
+                      <td>{renderRecipientStatuses(item)}</td>
+                      <td className="table-actions">
+                        <button className="ghost-button" onClick={() => handleOpenExpenseDetail(item.id)} type="button">
+                          항목 보기
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {!sentExpenseReports.length && (
+                    <tr>
+                      <td colSpan={8}>경비지출 내역이 없습니다.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
         </section>
       </section>
+
+      {isEditorOpen && !isExecutive && (
+        <div className="modal-backdrop">
+          <form className="modal-panel report-detail-modal form-stack report-editor-modal" onSubmit={handleSubmit}>
+            <div className="panel-head">
+              <h2>{editingId ? "보고 수정" : "보고 작성"}</h2>
+              <button className="ghost-button" onClick={openCreateForm} type="button">보고 작성 닫기</button>
+            </div>
+
+            <div className="report-detail-head">
+              <strong>{form.title || (editingId ? "보고 수정" : "새 보고")}</strong>
+              <span>{labelOf(reportTypeLabels, form.report_type)}</span>
+            </div>
+
+            <div className="report-detail-meta">
+              <label>
+                <dt>보고 유형</dt>
+                <dd>
+                  <select onChange={(event) => setForm((current) => ({ ...current, report_type: event.target.value }))} value={form.report_type}>
+                    <option value="WORK_REPORT">업무보고</option>
+                    <option value="EXPENSE_REPORT">경비지출</option>
+                  </select>
+                </dd>
+              </label>
+              <label>
+                <dt>보고일</dt>
+                <dd>
+                  <input onChange={(event) => setForm((current) => ({ ...current, report_date: event.target.value }))} required type="date" value={form.report_date} />
+                </dd>
+              </label>
+              <label>
+                <dt>첨부</dt>
+                <dd>
+                  <input onChange={(event) => setReportAttachment(event.target.files?.[0] ?? null)} type="file" />
+                  {reportAttachment && (
+                    <button className="text-button" onClick={() => setReportAttachment(null)} type="button">
+                      선택 해제: {reportAttachment.name}
+                    </button>
+                  )}
+                </dd>
+              </label>
+            </div>
+
+            <section className="report-detail-section">
+              <label className="assignee-search">
+                <h3>수신자</h3>
+                <div className="inline-entry">
+                  <input
+                    onChange={(event) => handleRecipientSearch(event.target.value)}
+                    onKeyDown={handleManualRecipientKeyDown}
+                    placeholder="이름, 이메일, 부서, 직함 검색 또는 직접 입력"
+                    value={recipientSearch}
+                  />
+                  <button className="ghost-button" onClick={addManualRecipients} type="button">추가</button>
+                </div>
+                {!!recipientResults.length && (
+                  <div className="assignee-dropdown">
+                    {recipientResults.map((entry) => (
+                      <button key={entry.id} onClick={() => selectRecipient(entry)} type="button">{userLabel(entry)}</button>
+                    ))}
+                  </div>
+                )}
+              </label>
+              <div className="recipient-picker">
+                {manualRecipients.map((recipient) => (
+                  <button className="recipient-option manual" key={recipient} onClick={() => removeManualRecipient(recipient)} type="button">
+                    직접: {recipient}
+                  </button>
+                ))}
+                {selectedRecipients.map((recipient) => (
+                  <button className="recipient-option" key={recipient.id} onClick={() => removeRecipient(recipient.id)} type="button">
+                    {userLabel(recipient)}
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            <section className="report-detail-section">
+              <label>
+                <h3>제목</h3>
+                <input onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))} required value={form.title} />
+              </label>
+            </section>
+
+            {form.report_type !== "EXPENSE_REPORT" && (
+              <section className="report-detail-section">
+                <label>
+                  <h3>내용</h3>
+                  <textarea onChange={(event) => setForm((current) => ({ ...current, content: event.target.value }))} rows={7} value={form.content} />
+                </label>
+              </section>
+            )}
+
+            {form.report_type === "EXPENSE_REPORT" && (
+              <section className="report-detail-section">
+                <h3>경비 내역</h3>
+                <div className="report-detail-meta report-expense-meta">
+                  <label>
+                    <dt>사용일</dt>
+                    <dd><input onChange={(event) => setExpenseItem((current) => ({ ...current, expense_date: event.target.value }))} type="date" value={expenseItem.expense_date} /></dd>
+                  </label>
+                  <label>
+                    <dt>분류</dt>
+                    <dd>
+                      <select onChange={(event) => setExpenseItem((current) => ({ ...current, category: event.target.value }))} value={expenseItem.category}>
+                        {Object.entries(expenseCategoryLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                      </select>
+                    </dd>
+                  </label>
+                  <label>
+                    <dt>지출처</dt>
+                    <dd><input onChange={(event) => setExpenseItem((current) => ({ ...current, description: event.target.value }))} value={expenseItem.description} /></dd>
+                  </label>
+                  <label>
+                    <dt>금액</dt>
+                    <dd><input min="0" onChange={(event) => setExpenseItem((current) => ({ ...current, amount: event.target.value }))} type="number" value={expenseItem.amount} /></dd>
+                  </label>
+                  <label>
+                    <dt>결제수단</dt>
+                    <dd>
+                      <select onChange={(event) => setExpenseItem((current) => ({ ...current, payment_method: event.target.value }))} value={expenseItem.payment_method}>
+                        {Object.entries(paymentMethodLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                      </select>
+                    </dd>
+                  </label>
+                </div>
+              </section>
+            )}
+
+            {form.report_type === "EXPENSE_REPORT" && (
+              <section className="report-detail-section">
+                <label>
+                  <h3>비고</h3>
+                  <textarea
+                    className="expense-note-input"
+                    onChange={(event) => setForm((current) => ({ ...current, content: event.target.value }))}
+                    rows={1}
+                    value={form.content}
+                  />
+                </label>
+              </section>
+            )}
+
+            <button className="primary-button" disabled={isSaving} type="submit">
+              {isSaving ? "저장 중" : editingId ? "수정" : "등록"}
+            </button>
+          </form>
+        </div>
+      )}
+
+      {isDetailLoading && (
+        <div className="modal-backdrop">
+          <div className="modal-panel report-detail-modal">
+            <p className="report-detail-loading">보고서를 불러오는 중입니다.</p>
+          </div>
+        </div>
+      )}
+
+      {detailTarget && !isDetailLoading && (
+        <div className="modal-backdrop">
+          <div className="modal-panel report-detail-modal">
+            <div className="panel-head">
+              <h2>보고서 내용</h2>
+              <button className="ghost-button" onClick={() => setDetailTarget(null)} type="button">
+                닫기
+              </button>
+            </div>
+
+            <div className="report-detail-head">
+              <strong>{detailTarget.title}</strong>
+              <span>{labelOf(reportStatusLabels, detailTarget.status)}</span>
+            </div>
+
+            <dl className="report-detail-meta">
+              <div>
+                <dt>유형</dt>
+                <dd>{labelOf(reportTypeLabels, detailTarget.report_type)}</dd>
+              </div>
+              <div>
+                <dt>보고일</dt>
+                <dd>{formatDate(detailTarget.report_date)}</dd>
+              </div>
+              <div>
+                <dt>제출시간</dt>
+                <dd>{detailTarget.submitted_at ? formatDateTime(detailTarget.submitted_at) : "-"}</dd>
+              </div>
+              <div>
+                <dt>작성자</dt>
+                <dd>{detailTarget.writer_name || "-"}</dd>
+              </div>
+              <div>
+                <dt>수신자</dt>
+                <dd>{renderRecipientNames(detailTarget)}</dd>
+              </div>
+              {detailTarget.report_type === "EXPENSE_REPORT" && (
+                <div>
+                  <dt>총액</dt>
+                  <dd>{formatMoney(detailTarget.total_amount)}</dd>
+                </div>
+              )}
+            </dl>
+
+            <section className="report-detail-section">
+              <h3>내용</h3>
+              <p className="report-detail-content">{detailTarget.content?.trim() || "작성된 내용이 없습니다."}</p>
+            </section>
+
+            <section className="report-detail-section">
+              <h3>첨부</h3>
+              {renderReportFiles(detailTarget.files) || <p className="report-detail-empty">첨부파일이 없습니다.</p>}
+            </section>
+
+            {detailTarget.report_type === "EXPENSE_REPORT" && (
+              <section className="report-detail-section expense-summary-section">
+                <div>
+                  <h3>경비지출 항목</h3>
+                  <p>{detailTarget.expense_items?.length ? `${detailTarget.expense_items.length}건 · ${formatMoney(detailTarget.total_amount)}` : "등록된 항목 없음"}</p>
+                </div>
+                <button className="ghost-button" onClick={() => setExpenseDetailTarget(detailTarget)} type="button">
+                  경비지출 항목 보기
+                </button>
+              </section>
+            )}
+
+            <section className="report-detail-section">
+              <h3>수신 상태</h3>
+              {renderRecipientDetailStatuses(detailTarget)}
+            </section>
+          </div>
+        </div>
+      )}
+
+      {expenseDetailTarget && (
+        <div className="modal-backdrop nested-modal-backdrop">
+          <div className="modal-panel report-detail-modal">
+            <div className="panel-head">
+              <h2>경비지출 항목</h2>
+              <button className="ghost-button" onClick={() => setExpenseDetailTarget(null)} type="button">
+                닫기
+              </button>
+            </div>
+            <div className="report-detail-head">
+              <strong>{expenseDetailTarget.title}</strong>
+              <span>{formatMoney(expenseDetailTarget.total_amount)}</span>
+            </div>
+            <section className="report-detail-section">
+              {renderExpenseItems(expenseDetailTarget)}
+            </section>
+          </div>
+        </div>
+      )}
 
       {returnTarget && (
         <div className="modal-backdrop">

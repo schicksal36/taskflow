@@ -55,6 +55,7 @@ const bulkExpenseStatusLabels: Record<ExpenseWorkflowStatus, string> = {
   SETTLING: "정산중",
   SETTLED: "정산완료",
 };
+const reportStatusFilterKeys = ["DRAFT", "SUBMITTED", "CONFIRMED", "RETURNED", "CANCELED"];
 
 function nextExpenseStatuses(status: string): ExpenseWorkflowStatus[] {
   if (status === "SUBMITTED") {
@@ -114,6 +115,33 @@ function monthLabelOf(value: string) {
   return `${year}년 ${Number(month)}월`;
 }
 
+function formatWonAmount(value: number) {
+  return `${new Intl.NumberFormat("ko-KR").format(value)}원`;
+}
+
+function formatKoreanAmount(value: number) {
+  const amount = Math.abs(value);
+  const sign = value < 0 ? "-" : "";
+  if (amount >= 100000000) {
+    const eok = amount / 100000000;
+    return `${sign}${Number.isInteger(eok) ? eok : eok.toFixed(1)}억원`;
+  }
+  if (amount >= 10000) {
+    const man = amount / 10000;
+    return `${sign}${Number.isInteger(man) ? man : man.toFixed(1)}만원`;
+  }
+  return `${sign}${new Intl.NumberFormat("ko-KR").format(amount)}원`;
+}
+
+function settlementDisplayLabel(month: string, amount: number) {
+  const amountLabel = formatWonAmount(amount);
+  const koreanAmountLabel = formatKoreanAmount(amount);
+  if (month === "ALL") {
+    return `전체 ${amountLabel} (${koreanAmountLabel})`;
+  }
+  return `${monthLabelOf(month)} ${amountLabel} (${koreanAmountLabel})`;
+}
+
 function buildSettlementSummary(reports: Report[]) {
   const settledReports = reports.filter((item) => item.report_type === "EXPENSE_REPORT" && item.status === "SETTLED");
   const currentMonth = todayString().slice(0, 7);
@@ -125,12 +153,12 @@ function buildSettlementSummary(reports: Report[]) {
 
   return {
     currentMonth,
-    currentMonthTotal: monthlyMap[currentMonth] ?? 0,
     settledCount: settledReports.length,
     total: settledReports.reduce((sum, item) => sum + amountOf(item.total_amount), 0),
     monthly: Object.entries(monthlyMap)
       .sort(([left], [right]) => right.localeCompare(left))
       .map(([month, amount]) => ({ month, amount })),
+    monthlyMap,
   };
 }
 
@@ -176,6 +204,8 @@ export default function ReportsPage() {
   const [bulkExpenseStatus, setBulkExpenseStatus] = useState<ExpenseWorkflowStatus>("APPROVED");
   const [bulkRejectReason, setBulkRejectReason] = useState("");
   const [managerView, setManagerView] = useState<"pending" | "all">("pending");
+  const [managerSettlementMonth, setManagerSettlementMonth] = useState(todayString().slice(0, 7));
+  const [sentSettlementMonth, setSentSettlementMonth] = useState(todayString().slice(0, 7));
 
   const isExecutive = user?.role === "CEO" || user?.role === "SUPERUSER";
   const isManagerView = isExecutive || user?.role === "ADMIN";
@@ -239,6 +269,20 @@ export default function ReportsPage() {
     selectedManageableExpenseReports.length > 0 && availableBulkExpenseStatuses.includes(bulkExpenseStatus);
   const settlementSummary = useMemo(() => buildSettlementSummary(sentExpenseReports), [sentExpenseReports]);
   const managerSettlementSummary = useMemo(() => buildSettlementSummary(receivedReports), [receivedReports]);
+  const managerSettlementMonths = useMemo(
+    () => Array.from(new Set([managerSettlementSummary.currentMonth, ...managerSettlementSummary.monthly.map((entry) => entry.month)])),
+    [managerSettlementSummary],
+  );
+  const sentSettlementMonths = useMemo(
+    () => Array.from(new Set([settlementSummary.currentMonth, ...settlementSummary.monthly.map((entry) => entry.month)])),
+    [settlementSummary],
+  );
+  const managerSettlementAmount = managerSettlementMonth === "ALL"
+    ? managerSettlementSummary.total
+    : managerSettlementSummary.monthlyMap[managerSettlementMonth] ?? 0;
+  const sentSettlementAmount = sentSettlementMonth === "ALL"
+    ? settlementSummary.total
+    : settlementSummary.monthlyMap[sentSettlementMonth] ?? 0;
   const managerSummary = useMemo(() => ({
     pendingReports: receivedReports.filter((item) => item.report_type !== "EXPENSE_REPORT" && item.status === "SUBMITTED").length,
     pendingExpenses: receivedReports.filter((item) => item.report_type === "EXPENSE_REPORT" && item.status === "SUBMITTED").length,
@@ -916,9 +960,9 @@ export default function ReportsPage() {
             <label className="filter-field">
               <select onChange={(event) => setStatusFilter(event.target.value)} value={statusFilter}>
                 <option value="">상태 전체</option>
-                {Object.entries(reportStatusLabels).map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
+                {reportStatusFilterKeys.map((status) => (
+                  <option key={status} value={status}>
+                    {labelOf(reportStatusLabels, status)}
                   </option>
                 ))}
               </select>
@@ -1112,9 +1156,20 @@ export default function ReportsPage() {
                 <div className="report-section-head">
                   <h3 className="table-title">경비 내역</h3>
                   <div className="expense-settlement-summary" aria-label="관리자 경비 내역 요약">
-                    <span className="section-count">{visibleManagerExpenseReports.length}건</span>
-                    <strong>이번 달 {formatMoney(managerSettlementSummary.currentMonthTotal)}</strong>
-                    <strong>전체 {formatMoney(managerSettlementSummary.total)}</strong>
+                    <select
+                      aria-label="경비 정산 월 선택"
+                      className="settlement-month-select"
+                      onChange={(event) => setManagerSettlementMonth(event.target.value)}
+                      value={managerSettlementMonth}
+                    >
+                      <option value="ALL">전체</option>
+                      {managerSettlementMonths.map((month) => (
+                        <option key={month} value={month}>
+                          {monthLabelOf(month)}
+                        </option>
+                      ))}
+                    </select>
+                    <strong>{settlementDisplayLabel(managerSettlementMonth, managerSettlementAmount)}</strong>
                   </div>
                 </div>
                 {hasManageableExpenseReports && (
@@ -1243,21 +1298,25 @@ export default function ReportsPage() {
             <div className="table-wrap stacked-table">
               <div className="report-section-head">
                 <h3 className="table-title">경비지출 내역</h3>
-                <div className="expense-settlement-summary" aria-label="정산완료 기준 받을 금액">
-                  <span className="section-count">정산완료 {settlementSummary.settledCount}건</span>
-                  <strong>이번 달 {formatMoney(settlementSummary.currentMonthTotal)}</strong>
-                  <strong>전체 {formatMoney(settlementSummary.total)}</strong>
-                </div>
+                {isManagerView && (
+                  <div className="expense-settlement-summary" aria-label="정산완료 기준 받을 금액">
+                    <select
+                      aria-label="내 경비 정산 월 선택"
+                      className="settlement-month-select"
+                      onChange={(event) => setSentSettlementMonth(event.target.value)}
+                      value={sentSettlementMonth}
+                    >
+                      <option value="ALL">전체</option>
+                      {sentSettlementMonths.map((month) => (
+                        <option key={month} value={month}>
+                          {monthLabelOf(month)}
+                        </option>
+                      ))}
+                    </select>
+                    <strong>{settlementDisplayLabel(sentSettlementMonth, sentSettlementAmount)}</strong>
+                  </div>
+                )}
               </div>
-              {!!settlementSummary.monthly.length && (
-                <div className="expense-monthly-summary">
-                  {settlementSummary.monthly.map((entry) => (
-                    <span key={entry.month}>
-                      {monthLabelOf(entry.month)} {formatMoney(entry.amount)}
-                    </span>
-                  ))}
-                </div>
-              )}
               <table className="report-table expense-history-table">
                 <thead>
                   <tr>

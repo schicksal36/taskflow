@@ -17,12 +17,15 @@ import {
   type Schedule,
   type ScheduleInput,
   type Todo,
+  type UserListItem,
   createSchedule,
   deleteSchedule,
   describeApiError,
   fetchGoogleCalendarSubscription,
+  fetchSchedule,
   fetchSchedules,
   fetchTodos,
+  searchUsers,
   toArray,
   updateSchedule,
 } from "@/lib/api";
@@ -41,12 +44,13 @@ const emptyForm: ScheduleInput = {
   color: "#2563eb",
   is_all_day: false,
   repeat_type: "NONE",
+  participant_ids: [],
 };
 
 type ScheduleViewMode = "year" | "month" | "week" | "day";
 
 const weekDayLabels = ["일", "월", "화", "수", "목", "금", "토"];
-const scheduleTodoKeywords = ["출장", "휴가", "연차", "반차", "외근", "교육", "미팅", "회의"];
+const scheduleTodoKeywords = ["휴가", "연차", "반차", "월차"];
 
 function formatDateInput(date: Date) {
   const year = date.getFullYear();
@@ -140,6 +144,26 @@ function scheduleOwnerLabel(item: Schedule) {
   return org || contact ? `${name} (${org}${contact})` : name;
 }
 
+function userLabel(user: UserListItem) {
+  const name = user.first_name || user.display_name || "이름 미등록";
+  const department = user.department || "소속 미등록";
+  const position = user.position || "직함 미등록";
+  const email = user.email || user.username;
+  return email ? `${name} (${department} / ${position}) · ${email}` : `${name} (${department} / ${position})`;
+}
+
+function participantUserFromSchedule(item: NonNullable<Schedule["participants"]>[number]): UserListItem {
+  return {
+    id: item.user,
+    username: item.username || String(item.user),
+    email: item.email || item.username || String(item.user),
+    first_name: item.first_name || "",
+    display_name: item.display_name || item.first_name || item.email || item.username || String(item.user),
+    department: item.department || "",
+    position: item.position || "",
+  };
+}
+
 function toDateTimeInput(value?: string | null) {
   if (!value) {
     return "";
@@ -223,6 +247,9 @@ export default function SchedulesPage() {
   const [todos, setTodos] = useState<Todo[]>([]);
   const [form, setForm] = useState<ScheduleInput>(emptyForm);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [participantSearch, setParticipantSearch] = useState("");
+  const [participantResults, setParticipantResults] = useState<UserListItem[]>([]);
+  const [selectedParticipants, setSelectedParticipants] = useState<UserListItem[]>([]);
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [subscriptionUrl, setSubscriptionUrl] = useState("");
@@ -296,27 +323,36 @@ export default function SchedulesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router.query.mode]);
 
-  function startEdit(item: Schedule) {
+  async function startEdit(item: Schedule) {
+    const target = accessToken ? await fetchSchedule(accessToken, item.id).catch(() => item) : item;
+    const participants = target.participants?.map(participantUserFromSchedule) ?? [];
     setEditingId(item.id);
     setIsEditorOpen(true);
+    setParticipantSearch("");
+    setParticipantResults([]);
+    setSelectedParticipants(participants);
     setForm({
-      title: item.title,
-      content: item.content ?? "",
-      schedule_type: item.schedule_type,
-      start_at: toDateTimeInput(item.start_at),
-      end_at: toDateTimeInput(item.end_at),
-      location: item.location ?? "",
+      title: target.title,
+      content: target.content ?? "",
+      schedule_type: target.schedule_type,
+      start_at: toDateTimeInput(target.start_at),
+      end_at: toDateTimeInput(target.end_at),
+      location: target.location ?? "",
       is_shared: true,
-      remind_at: toDateTimeInput(item.remind_at),
-      color: item.color ?? "#2563eb",
-      is_all_day: Boolean(item.is_all_day),
-      repeat_type: item.repeat_type ?? "NONE",
+      remind_at: toDateTimeInput(target.remind_at),
+      color: target.color ?? "#2563eb",
+      is_all_day: Boolean(target.is_all_day),
+      repeat_type: target.repeat_type ?? "NONE",
+      participant_ids: participants.map((participant) => participant.id),
     });
   }
 
   function resetForm() {
     setEditingId(null);
     setForm(emptyForm);
+    setParticipantSearch("");
+    setParticipantResults([]);
+    setSelectedParticipants([]);
     setIsEditorOpen(false);
   }
 
@@ -326,12 +362,49 @@ export default function SchedulesPage() {
     setCalendarMonth(new Date(date.getFullYear(), date.getMonth(), 1));
     setDayDetailDate(null);
     setEditingId(null);
+    setParticipantSearch("");
+    setParticipantResults([]);
+    setSelectedParticipants([]);
     setIsEditorOpen(true);
     setForm({
       ...emptyForm,
       start_at: `${dateValue}T09:00`,
       end_at: `${dateValue}T10:00`,
     });
+  }
+
+  async function handleParticipantSearch(value: string) {
+    setParticipantSearch(value);
+    if (!accessToken || value.trim().length < 1) {
+      setParticipantResults([]);
+      return;
+    }
+    try {
+      const selectedIds = new Set(selectedParticipants.map((participant) => participant.id));
+      setParticipantResults(
+        toArray(await searchUsers(accessToken, value)).filter((entry) => entry.id !== user?.id && !selectedIds.has(entry.id)),
+      );
+    } catch {
+      setParticipantResults([]);
+    }
+  }
+
+  function selectParticipant(nextUser: UserListItem) {
+    setSelectedParticipants((current) => (current.some((entry) => entry.id === nextUser.id) ? current : [...current, nextUser]));
+    setForm((current) => ({
+      ...current,
+      participant_ids: Array.from(new Set([...(current.participant_ids ?? []), nextUser.id])),
+    }));
+    setParticipantSearch("");
+    setParticipantResults([]);
+  }
+
+  function removeParticipant(id: number) {
+    setSelectedParticipants((current) => current.filter((entry) => entry.id !== id));
+    setForm((current) => ({
+      ...current,
+      participant_ids: (current.participant_ids ?? []).filter((entryId) => entryId !== id),
+    }));
   }
 
   function openDayDetail(date: Date) {
@@ -734,6 +807,35 @@ export default function SchedulesPage() {
                 placeholder="위치 추가"
                 value={form.location}
               />
+
+              <div className="schedule-editor-icon" aria-hidden="true">@</div>
+              <div className="assignee-search schedule-participant-field">
+                <span className="schedule-field-label">참석자 추가</span>
+                <input
+                  aria-label="참석자 추가"
+                  onChange={(event) => handleParticipantSearch(event.target.value)}
+                  placeholder="이름, 이메일, 부서, 직함 검색"
+                  value={participantSearch}
+                />
+                {!!participantResults.length && (
+                  <div className="assignee-dropdown">
+                    {participantResults.map((entry) => (
+                      <button key={entry.id} onClick={() => selectParticipant(entry)} type="button">
+                        {userLabel(entry)}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {!!selectedParticipants.length && (
+                  <div className="recipient-picker schedule-participant-picker">
+                    {selectedParticipants.map((participant) => (
+                      <button className="recipient-option" key={participant.id} onClick={() => removeParticipant(participant.id)} type="button">
+                        {userLabel(participant)}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
 
               <div className="schedule-editor-icon" aria-hidden="true">!</div>
               <div className="schedule-time-row compact">

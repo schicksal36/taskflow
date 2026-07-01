@@ -71,6 +71,7 @@ taskflow-web/
 │   │   ├── api.ts       # 백엔드 API 호출, 업로드, 다운로드
 │   │   ├── format.ts    # 날짜/금액 포맷
 │   │   ├── labels.ts    # 상태/구분 라벨
+│   │   ├── manual.ts    # 사용설명서 데이터
 │   │   ├── releaseNotes.ts # 릴리즈노트 데이터
 │   │   └── webauthn.ts  # 생체인식 브라우저 처리
 │   ├── pages/
@@ -91,6 +92,7 @@ taskflow-web/
 │   │   ├── data-room.tsx
 │   │   ├── notifications.tsx
 │   │   ├── profile.tsx
+│   │   ├── manual.tsx
 │   │   ├── release-notes.tsx
 │   │   └── admin/
 │   │       └── users.tsx
@@ -312,6 +314,7 @@ npm run start
 | `src/pages/expenses.tsx` | 경비지출 작성/검토 단독 화면 |
 | `src/pages/boards.tsx` | 공지사항 등록/목록 |
 | `src/pages/data-room.tsx` | 자료실 등록/목록 |
+| `src/pages/manual.tsx` | 사용설명서 전체 내역 |
 | `src/pages/release-notes.tsx` | 릴리즈노트 전체 내역 |
 | `src/pages/admin/users.tsx` | 계정관리 |
 | `src/styles/globals.css` | 공통 UI, 카드/테이블/폼/반응형 스타일 |

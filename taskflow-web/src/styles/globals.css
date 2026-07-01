@@ -1196,6 +1196,17 @@ td {
   white-space: nowrap;
 }
 
+.settlement-month-select {
+  min-height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: #13233f;
+  padding: 5px 28px 5px 9px;
+  font-size: 13px;
+  font-weight: 900;
+}
+
 .expense-monthly-summary {
   justify-content: flex-start;
   margin: -2px 0 12px;
@@ -1634,6 +1645,7 @@ td {
 
 .schedule-time-row input,
 .schedule-editor-body > input,
+.schedule-participant-field > input,
 .schedule-editor-body textarea {
   min-height: 42px;
   border: 1px solid var(--line);
@@ -1666,6 +1678,21 @@ td {
   width: 100%;
   min-height: 150px;
   resize: vertical;
+}
+
+.schedule-participant-field {
+  display: grid;
+  gap: 8px;
+}
+
+.schedule-field-label {
+  color: #344562;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.schedule-participant-picker {
+  gap: 6px;
 }
 
 .schedule-inline-options {

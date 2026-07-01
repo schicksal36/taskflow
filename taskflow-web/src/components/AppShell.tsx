@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Logo } from "@/components/Logo";
 import { useAuth } from "@/contexts/AuthContext";
 import { fetchNotificationCount } from "@/lib/api";
+import { manualSections } from "@/lib/manual";
 import { groupReleaseNotesByDate, releaseNotes } from "@/lib/releaseNotes";
 
 type AppShellProps = {
@@ -29,42 +30,6 @@ const quickLinks = [
   { href: "/reports?mode=create", label: "보고 작성" },
 ];
 
-const manualSections = [
-  {
-    title: "보고관리",
-    items: [
-      "보고 작성 버튼으로 업무보고 또는 경비지출을 등록합니다.",
-      "제목을 클릭하면 보고서 본문, 첨부, 수신 상태를 확인합니다.",
-      "관리자는 관리자 작업대에서 처리대기, 경비정산, 전체 목록을 전환합니다.",
-      "경비지출은 승인/반려 후 정산중, 정산완료 순서로 처리합니다.",
-    ],
-  },
-  {
-    title: "업무관리",
-    items: [
-      "업무 등록 버튼으로 업무요청 또는 체크리스트를 등록합니다.",
-      "상태는 담당자 또는 본인 업무 소유자가 변경합니다.",
-      "체크리스트는 상세 화면에서 항목별로 체크할 수 있습니다.",
-    ],
-  },
-  {
-    title: "일정관리",
-    items: [
-      "날짜를 클릭하면 해당 날짜의 일정과 체크리스트 마감 목록을 확인합니다.",
-      "일정 등록 버튼으로 선택한 날짜에 새 일정을 추가합니다.",
-      "구글 캘린더 구독을 펼쳐 외부 캘린더에 연결할 수 있습니다.",
-    ],
-  },
-  {
-    title: "공지사항/자료실",
-    items: [
-      "대시보드 공지사항 전체보기 또는 자료 등록 버튼으로 작성 창을 엽니다.",
-      "자료실은 전체공개, 부서공개, 지정인원 권한을 설정할 수 있습니다.",
-      "첨부파일을 선택하면 등록 시 함께 업로드됩니다.",
-    ],
-  },
-];
-
 function formatToday() {
   return new Intl.DateTimeFormat("ko-KR", {
     year: "numeric",
@@ -80,8 +45,11 @@ export function AppShell({ title, description, children, actions }: AppShellProp
   const [unreadCount, setUnreadCount] = useState(0);
   const [isGuideOpen, setIsGuideOpen] = useState(false);
   const [guideTab, setGuideTab] = useState<"manual" | "release">("manual");
+  const [selectedManualIndex, setSelectedManualIndex] = useState(0);
   const [selectedReleaseIndex, setSelectedReleaseIndex] = useState(0);
   const isSuperuser = user?.role === "SUPERUSER";
+  const recentManualSections = manualSections.slice(0, 4);
+  const selectedManualSection = recentManualSections[selectedManualIndex] ?? recentManualSections[0];
   const recentReleaseNoteGroups = groupReleaseNotesByDate(releaseNotes).slice(0, 3);
   const selectedReleaseNoteGroup = recentReleaseNoteGroups[selectedReleaseIndex] ?? recentReleaseNoteGroups[0];
 
@@ -256,16 +224,36 @@ export function AppShell({ title, description, children, actions }: AppShellProp
             </div>
 
             {guideTab === "manual" ? (
-              <div className="guide-section-list">
-                {manualSections.map((section) => (
-                  <section className="guide-section" key={section.title}>
-                    <h3>{section.title}</h3>
-                    <ul>
-                      {section.items.map((item) => <li key={item}>{item}</li>)}
-                    </ul>
+              <>
+                <div className="release-layout">
+                  <div className="release-list">
+                    {recentManualSections.map((section, index) => (
+                      <button className={selectedManualIndex === index ? "active" : ""} key={section.category} onClick={() => setSelectedManualIndex(index)} type="button">
+                        <strong>{section.category}</strong>
+                        <span>{section.items.length}건</span>
+                        <small>{section.items.map((item) => item.title).join(", ")}</small>
+                      </button>
+                    ))}
+                  </div>
+                  <section className="release-detail">
+                    <span>{selectedManualSection.category}</span>
+                    {selectedManualSection.items.map((item) => (
+                      <article className="release-detail-note" key={`${selectedManualSection.category}-${item.title}`}>
+                        <h3>{item.title}</h3>
+                        <p>{item.summary}</p>
+                        <ul>
+                          {item.details.map((detail) => <li key={detail}>{detail}</li>)}
+                        </ul>
+                      </article>
+                    ))}
                   </section>
-                ))}
-              </div>
+                </div>
+                <div className="guide-modal-actions">
+                  <Link className="secondary-button small" href="/manual" onClick={() => setIsGuideOpen(false)}>
+                    전체내역 보기
+                  </Link>
+                </div>
+              </>
             ) : (
               <>
                 <div className="release-layout">

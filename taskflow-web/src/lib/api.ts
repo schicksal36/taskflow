@@ -373,8 +373,23 @@ export type Schedule = {
   is_all_day?: boolean;
   repeat_type?: string;
   participant_count?: number;
+  participants?: ScheduleParticipant[];
   created_at?: string;
   updated_at?: string;
+};
+
+export type ScheduleParticipant = {
+  id: number;
+  schedule: number;
+  user: number;
+  username?: string;
+  email?: string;
+  first_name?: string;
+  display_name?: string;
+  department?: string;
+  position?: string;
+  response?: string;
+  created_at?: string;
 };
 
 export type ScheduleInput = {
@@ -389,6 +404,7 @@ export type ScheduleInput = {
   color?: string;
   is_all_day?: boolean;
   repeat_type?: string;
+  participant_ids?: number[];
 };
 
 export type GoogleCalendarSubscription = {
@@ -970,6 +986,10 @@ export function uncheckTodoItem(token: string, itemId: number) {
 
 export function fetchSchedules(token: string) {
   return apiFetch<ListShape<Schedule>>("/schedules/", { token });
+}
+
+export function fetchSchedule(token: string, id: number) {
+  return apiFetch<Schedule>(`/schedules/${id}/`, { token });
 }
 
 export function fetchTodaySchedules(token: string) {

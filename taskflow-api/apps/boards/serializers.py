@@ -72,7 +72,7 @@ class BoardPostCreateUpdateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = BoardPost
-        fields = ["board_type", "title", "content", "is_notice", "is_pinned", "permission", "specific_user_ids"]
+        fields = ["id", "board_type", "title", "content", "is_notice", "is_pinned", "permission", "specific_user_ids"]
 
     specific_user_ids = serializers.PrimaryKeyRelatedField(
         source="specific_users",

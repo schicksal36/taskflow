@@ -4,6 +4,7 @@ import { AppShell } from "@/components/AppShell";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   type Notification,
+  deleteAllNotifications,
   deleteNotification,
   describeApiError,
   fetchNotifications,
@@ -82,14 +83,35 @@ export default function NotificationsPage() {
     }
   }
 
+  async function handleDeleteAll() {
+    if (!accessToken || !items.length) {
+      return;
+    }
+    if (!window.confirm("전체 알림을 삭제할까요?")) {
+      return;
+    }
+
+    try {
+      await deleteAllNotifications(accessToken);
+      await loadItems();
+    } catch (error) {
+      setMessage(describeApiError(error));
+    }
+  }
+
   return (
     <AppShell
       title="알림센터"
       description="알림 API로 알림을 조회하고 읽음 처리합니다."
       actions={
-        <button className="secondary-button small" onClick={handleReadAll} type="button">
-          전체 읽음
-        </button>
+        <>
+          <button className="secondary-button small" disabled={!items.length} onClick={handleReadAll} type="button">
+            전체 읽음
+          </button>
+          <button className="danger-button small" disabled={!items.length} onClick={handleDeleteAll} type="button">
+            전체 삭제
+          </button>
+        </>
       }
     >
       {message && <p className="notice error">{message}</p>}

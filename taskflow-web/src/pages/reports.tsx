@@ -55,7 +55,8 @@ const bulkExpenseStatusLabels: Record<ExpenseWorkflowStatus, string> = {
   SETTLING: "정산중",
   SETTLED: "정산완료",
 };
-const reportStatusFilterKeys = ["DRAFT", "SUBMITTED", "CONFIRMED", "RETURNED", "CANCELED"];
+const workReportStatusFilterKeys = ["DRAFT", "SUBMITTED", "CONFIRMED", "RETURNED", "CANCELED"];
+const expenseReportStatusFilterKeys = ["APPROVED", "REJECTED", "SETTLING", "SETTLED"];
 
 function nextExpenseStatuses(status: string): ExpenseWorkflowStatus[] {
   if (status === "SUBMITTED") {
@@ -98,13 +99,45 @@ function recipientLabel(recipient: NonNullable<Report["recipients"]>[number]) {
   return details.length ? `${recipient.name} (${details.join(" / ")})` : recipient.name;
 }
 
+function splitPersonLabel(value?: string | null) {
+  if (!value || value === "-") {
+    return { name: "-", details: "" };
+  }
+  const match = value.match(/^(.*?)\s*\((.*)\)$/);
+  if (!match) {
+    return { name: value, details: "" };
+  }
+  return { name: match[1], details: match[2] };
+}
+
+function reportWriterLabel(item: Report) {
+  const name = item.writer_name?.replace(/\s*\(.*\)$/, "") || "-";
+  const details = [item.writer_department, item.writer_position].filter(Boolean).join(" / ");
+  return details ? `${name} (${details})` : item.writer_name || "-";
+}
+
+function isReportInMonth(item: Report, month: string) {
+  return month === "ALL" || monthKeyOf(item.report_date) === month;
+}
+
 function amountOf(value?: string | number | null) {
   const amount = Number(value ?? 0);
   return Number.isFinite(amount) ? amount : 0;
 }
 
 function monthKeyOf(value?: string | null) {
-  return value?.slice(0, 7) || "날짜 없음";
+  if (!value) {
+    return "날짜 없음";
+  }
+  const match = value.match(/^(\d{4})[-.\s년]+(\d{1,2})/);
+  if (match) {
+    return `${match[1]}-${match[2].padStart(2, "0")}`;
+  }
+  const date = new Date(value);
+  if (!Number.isNaN(date.getTime())) {
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+  }
+  return "날짜 없음";
 }
 
 function monthLabelOf(value: string) {
@@ -133,18 +166,20 @@ function formatKoreanAmount(value: number) {
   return `${sign}${new Intl.NumberFormat("ko-KR").format(amount)}원`;
 }
 
-function settlementDisplayLabel(month: string, amount: number) {
-  const amountLabel = formatWonAmount(amount);
-  const koreanAmountLabel = formatKoreanAmount(amount);
-  if (month === "ALL") {
-    return `전체 ${amountLabel} (${koreanAmountLabel})`;
-  }
-  return `${monthLabelOf(month)} ${amountLabel} (${koreanAmountLabel})`;
+function settlementDisplayLabel(month: string, approvedAmount: number, settledAmount: number) {
+  const monthLabel = month === "ALL" ? "전체" : monthLabelOf(month);
+  return `${monthLabel} 승인 ${formatWonAmount(approvedAmount)} / 정산완료 ${formatWonAmount(settledAmount)}`;
 }
 
 function buildSettlementSummary(reports: Report[]) {
+  const approvedReports = reports.filter((item) => item.report_type === "EXPENSE_REPORT" && item.status === "APPROVED");
   const settledReports = reports.filter((item) => item.report_type === "EXPENSE_REPORT" && item.status === "SETTLED");
   const currentMonth = todayString().slice(0, 7);
+  const approvedMonthlyMap = approvedReports.reduce<Record<string, number>>((result, item) => {
+    const key = monthKeyOf(item.report_date);
+    result[key] = (result[key] ?? 0) + amountOf(item.total_amount);
+    return result;
+  }, {});
   const monthlyMap = settledReports.reduce<Record<string, number>>((result, item) => {
     const key = monthKeyOf(item.report_date);
     result[key] = (result[key] ?? 0) + amountOf(item.total_amount);
@@ -153,6 +188,9 @@ function buildSettlementSummary(reports: Report[]) {
 
   return {
     currentMonth,
+    approvedCount: approvedReports.length,
+    approvedTotal: approvedReports.reduce((sum, item) => sum + amountOf(item.total_amount), 0),
+    approvedMonthlyMap,
     settledCount: settledReports.length,
     total: settledReports.reduce((sum, item) => sum + amountOf(item.total_amount), 0),
     monthly: Object.entries(monthlyMap)
@@ -220,20 +258,43 @@ export default function ReportsPage() {
         .sort((left, right) => (left.display_name || left.email).localeCompare(right.display_name || right.email)),
     [departmentFilter, reportUsers],
   );
-  const filteredReports = items.filter((item) => !reportTypeFilter || item.report_type === reportTypeFilter);
-  const sentReports = isExecutive ? [] : filteredReports.filter((item) => item.writer === user?.id);
-  const sentExpenseReports = sentReports.filter((item) => item.report_type === "EXPENSE_REPORT");
-  const receivedReports = isExecutive
-    ? filteredReports.filter((item) => !["DRAFT", "CANCELED"].includes(item.status))
-    : filteredReports.filter(
-        (item) =>
-          item.approver === user?.id ||
-          item.recipient_ids?.includes(user?.id ?? -1) ||
-          item.recipients?.some((recipient) => recipient.recipient === user?.id),
-      );
-  const managerExpenseReports = isManagerView
-    ? receivedReports.filter((item) => item.report_type === "EXPENSE_REPORT")
-    : [];
+  const statusFilterKeys = useMemo(() => {
+    if (reportTypeFilter === "WORK_REPORT") {
+      return workReportStatusFilterKeys;
+    }
+    if (reportTypeFilter === "EXPENSE_REPORT") {
+      return expenseReportStatusFilterKeys;
+    }
+    return [];
+  }, [reportTypeFilter]);
+  const filteredReports = useMemo(
+    () => items.filter((item) => !reportTypeFilter || item.report_type === reportTypeFilter),
+    [items, reportTypeFilter],
+  );
+  const sentReports = useMemo(
+    () => (isExecutive ? [] : filteredReports.filter((item) => item.writer === user?.id)),
+    [filteredReports, isExecutive, user?.id],
+  );
+  const sentExpenseReports = useMemo(
+    () => sentReports.filter((item) => item.report_type === "EXPENSE_REPORT"),
+    [sentReports],
+  );
+  const receivedReports = useMemo(
+    () =>
+      isExecutive
+        ? filteredReports.filter((item) => !["DRAFT", "CANCELED"].includes(item.status))
+        : filteredReports.filter(
+            (item) =>
+              item.approver === user?.id ||
+              item.recipient_ids?.includes(user?.id ?? -1) ||
+              item.recipients?.some((recipient) => recipient.recipient === user?.id),
+          ),
+    [filteredReports, isExecutive, user?.id],
+  );
+  const managerExpenseReports = useMemo(
+    () => (isManagerView ? receivedReports.filter((item) => item.report_type === "EXPENSE_REPORT") : []),
+    [isManagerView, receivedReports],
+  );
   const visibleReceivedReports = useMemo(() => {
     if (!isManagerView) {
       return receivedReports;
@@ -246,9 +307,14 @@ export default function ReportsPage() {
   const visibleReportRows = isManagerView
     ? visibleReceivedReports.filter((item) => item.report_type !== "EXPENSE_REPORT")
     : visibleReceivedReports;
-  const visibleManagerExpenseReports = isManagerView
-    ? managerExpenseReports
-    : [];
+  const visibleManagerExpenseReports = useMemo(
+    () => (isManagerView ? managerExpenseReports.filter((item) => isReportInMonth(item, managerSettlementMonth)) : []),
+    [isManagerView, managerExpenseReports, managerSettlementMonth],
+  );
+  const visibleSentExpenseReports = useMemo(
+    () => sentExpenseReports.filter((item) => isReportInMonth(item, sentSettlementMonth)),
+    [sentExpenseReports, sentSettlementMonth],
+  );
   const manageableExpenseReports = visibleManagerExpenseReports.filter((item) => item.writer !== user?.id && nextExpenseStatuses(item.status).length > 0);
   const hasManageableExpenseReports = manageableExpenseReports.length > 0;
   const selectedManageableExpenseReports = manageableExpenseReports.filter((item) => selectedExpenseIds.includes(item.id));
@@ -277,9 +343,15 @@ export default function ReportsPage() {
     () => Array.from(new Set([settlementSummary.currentMonth, ...settlementSummary.monthly.map((entry) => entry.month)])),
     [settlementSummary],
   );
+  const managerApprovedAmount = managerSettlementMonth === "ALL"
+    ? managerSettlementSummary.approvedTotal
+    : managerSettlementSummary.approvedMonthlyMap[managerSettlementMonth] ?? 0;
   const managerSettlementAmount = managerSettlementMonth === "ALL"
     ? managerSettlementSummary.total
     : managerSettlementSummary.monthlyMap[managerSettlementMonth] ?? 0;
+  const sentApprovedAmount = sentSettlementMonth === "ALL"
+    ? settlementSummary.approvedTotal
+    : settlementSummary.approvedMonthlyMap[sentSettlementMonth] ?? 0;
   const sentSettlementAmount = sentSettlementMonth === "ALL"
     ? settlementSummary.total
     : settlementSummary.monthlyMap[sentSettlementMonth] ?? 0;
@@ -296,6 +368,12 @@ export default function ReportsPage() {
       setBulkExpenseStatus(availableBulkExpenseStatuses[0]);
     }
   }, [availableBulkExpenseStatuses, bulkExpenseStatus]);
+
+  useEffect(() => {
+    if (statusFilter && !statusFilterKeys.includes(statusFilter)) {
+      setStatusFilter("");
+    }
+  }, [statusFilter, statusFilterKeys]);
 
   async function loadItems() {
     /**
@@ -643,6 +721,16 @@ export default function ReportsPage() {
     return files?.length ? "있음" : "없음";
   }
 
+  function renderPersonLabel(value?: string | null) {
+    const person = splitPersonLabel(value);
+    return (
+      <div className="person-cell report-person-cell">
+        <strong>{person.name}</strong>
+        {person.details && <span>{person.details}</span>}
+      </div>
+    );
+  }
+
   function renderRecipientNames(item: Report) {
     if (!item.recipients?.length) {
       return "-";
@@ -650,7 +738,7 @@ export default function ReportsPage() {
     return (
       <div className="recipient-status-list">
         {item.recipients.map((recipient) => (
-          <span key={recipient.id}>{recipientLabel(recipient)}</span>
+          <div key={recipient.id}>{renderPersonLabel(recipientLabel(recipient))}</div>
         ))}
       </div>
     );
@@ -951,7 +1039,13 @@ export default function ReportsPage() {
               />
             </label>
             <label className="filter-field">
-              <select onChange={(event) => setReportTypeFilter(event.target.value)} value={reportTypeFilter}>
+              <select
+                onChange={(event) => {
+                  setReportTypeFilter(event.target.value);
+                  setStatusFilter("");
+                }}
+                value={reportTypeFilter}
+              >
                 <option value="">유형 전체</option>
                 <option value="WORK_REPORT">업무보고</option>
                 <option value="EXPENSE_REPORT">경비지출</option>
@@ -960,7 +1054,7 @@ export default function ReportsPage() {
             <label className="filter-field">
               <select onChange={(event) => setStatusFilter(event.target.value)} value={statusFilter}>
                 <option value="">상태 전체</option>
-                {reportStatusFilterKeys.map((status) => (
+                {statusFilterKeys.map((status) => (
                   <option key={status} value={status}>
                     {labelOf(reportStatusLabels, status)}
                   </option>
@@ -1125,7 +1219,7 @@ export default function ReportsPage() {
                       </td>
                       <td>{labelOf(reportTypeLabels, item.report_type)}</td>
                       <td>{renderAttachmentPresence(item.files)}</td>
-                      <td>{item.writer_name || "-"}</td>
+                      <td>{renderPersonLabel(reportWriterLabel(item))}</td>
                       <td>{labelOf(reportStatusLabels, item.status)}</td>
                       <td>{formatDate(item.report_date)}</td>
                       <td>{myRecord?.is_read ? "읽음" : "안읽음"}</td>
@@ -1169,7 +1263,7 @@ export default function ReportsPage() {
                         </option>
                       ))}
                     </select>
-                    <strong>{settlementDisplayLabel(managerSettlementMonth, managerSettlementAmount)}</strong>
+                    <strong>{settlementDisplayLabel(managerSettlementMonth, managerApprovedAmount, managerSettlementAmount)}</strong>
                   </div>
                 </div>
                 {hasManageableExpenseReports && (
@@ -1209,7 +1303,7 @@ export default function ReportsPage() {
                     </button>
                   </div>
                 )}
-                <table className="report-table expense-history-table">
+                <table className={`report-table expense-history-table manager-expense-table${hasManageableExpenseReports ? " has-selection" : ""}`}>
                   <thead>
                     <tr>
                       {hasManageableExpenseReports && <th>선택</th>}
@@ -1246,7 +1340,7 @@ export default function ReportsPage() {
                             </button>
                           </td>
                           <td>{item.expense_place || "-"}</td>
-                          <td>{item.writer_name || "-"}</td>
+                          <td>{renderPersonLabel(reportWriterLabel(item))}</td>
                           <td>{formatDate(item.report_date)}</td>
                           <td>{formatMoney(item.total_amount)}</td>
                           <td>{labelOf(reportStatusLabels, item.status)}</td>
@@ -1298,26 +1392,24 @@ export default function ReportsPage() {
             <div className="table-wrap stacked-table">
               <div className="report-section-head">
                 <h3 className="table-title">경비지출 내역</h3>
-                {isManagerView && (
-                  <div className="expense-settlement-summary" aria-label="정산완료 기준 받을 금액">
-                    <select
-                      aria-label="내 경비 정산 월 선택"
-                      className="settlement-month-select"
-                      onChange={(event) => setSentSettlementMonth(event.target.value)}
-                      value={sentSettlementMonth}
-                    >
-                      <option value="ALL">전체</option>
-                      {sentSettlementMonths.map((month) => (
-                        <option key={month} value={month}>
-                          {monthLabelOf(month)}
-                        </option>
-                      ))}
-                    </select>
-                    <strong>{settlementDisplayLabel(sentSettlementMonth, sentSettlementAmount)}</strong>
-                  </div>
-                )}
+                <div className="expense-settlement-summary" aria-label="정산완료 기준 받을 금액">
+                  <select
+                    aria-label="내 경비 정산 월 선택"
+                    className="settlement-month-select"
+                    onChange={(event) => setSentSettlementMonth(event.target.value)}
+                    value={sentSettlementMonth}
+                  >
+                    <option value="ALL">전체</option>
+                    {sentSettlementMonths.map((month) => (
+                      <option key={month} value={month}>
+                        {monthLabelOf(month)}
+                      </option>
+                    ))}
+                  </select>
+                  <strong>{settlementDisplayLabel(sentSettlementMonth, sentApprovedAmount, sentSettlementAmount)}</strong>
+                </div>
               </div>
-              <table className="report-table expense-history-table">
+              <table className="report-table expense-history-table sent-expense-table">
                 <thead>
                   <tr>
                     <th>제목</th>
@@ -1331,7 +1423,7 @@ export default function ReportsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {sentExpenseReports.map((item) => (
+                  {visibleSentExpenseReports.map((item) => (
                     <tr key={`expense-history-${item.id}`}>
                       <td>
                         <button className="table-title-button" onClick={() => handleOpenReportDetail(item.id)} type="button">
@@ -1351,7 +1443,7 @@ export default function ReportsPage() {
                       </td>
                     </tr>
                   ))}
-                  {!sentExpenseReports.length && (
+                  {!visibleSentExpenseReports.length && (
                     <tr>
                       <td colSpan={8}>경비지출 내역이 없습니다.</td>
                     </tr>
@@ -1546,7 +1638,7 @@ export default function ReportsPage() {
               </div>
               <div>
                 <dt>작성자</dt>
-                <dd>{detailTarget.writer_name || "-"}</dd>
+                <dd>{reportWriterLabel(detailTarget)}</dd>
               </div>
               <div>
                 <dt>수신자</dt>

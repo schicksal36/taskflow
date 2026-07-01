@@ -993,6 +993,7 @@ td {
   letter-spacing: 0;
   word-break: keep-all;
   text-align: center;
+  vertical-align: middle;
 }
 
 .report-table th {
@@ -1060,7 +1061,7 @@ td {
 }
 
 .report-table .recipient-status-list {
-  min-width: 180px;
+  min-width: 0;
   line-height: 1.45;
 }
 
@@ -1097,11 +1098,88 @@ td {
 }
 
 .expense-history-table {
-  min-width: 980px;
+  min-width: 1120px;
 }
 
 .expense-history-table .table-actions {
   min-width: 96px;
+}
+
+.received-report-table th:nth-child(1),
+.received-report-table td:nth-child(1),
+.sent-report-table th:nth-child(1),
+.sent-report-table td:nth-child(1) {
+  width: 18%;
+}
+
+.received-report-table th:nth-child(4),
+.received-report-table td:nth-child(4) {
+  width: 15%;
+}
+
+.sent-report-table th:nth-child(6),
+.sent-report-table td:nth-child(6),
+.sent-report-table th:nth-child(7),
+.sent-report-table td:nth-child(7) {
+  width: 14%;
+}
+
+.tasks-table th:nth-child(1),
+.tasks-table td:nth-child(1) {
+  width: 24%;
+}
+
+.tasks-table th:nth-child(3),
+.tasks-table td:nth-child(3),
+.tasks-table th:nth-child(4),
+.tasks-table td:nth-child(4) {
+  width: 15%;
+}
+
+.tasks-table th:nth-child(8),
+.tasks-table td:nth-child(8) {
+  width: 112px;
+}
+
+.manager-expense-table th:nth-child(1),
+.manager-expense-table td:nth-child(1),
+.sent-expense-table th:nth-child(1),
+.sent-expense-table td:nth-child(1) {
+  width: 20%;
+}
+
+.manager-expense-table.has-selection th:nth-child(1),
+.manager-expense-table.has-selection td:nth-child(1) {
+  width: 56px;
+}
+
+.manager-expense-table.has-selection th:nth-child(2),
+.manager-expense-table.has-selection td:nth-child(2) {
+  width: 20%;
+}
+
+.manager-expense-table th:nth-child(3),
+.manager-expense-table td:nth-child(3) {
+  width: 15%;
+}
+
+.manager-expense-table.has-selection th:nth-child(4),
+.manager-expense-table.has-selection td:nth-child(4) {
+  width: 15%;
+}
+
+.sent-expense-table th:nth-child(6),
+.sent-expense-table td:nth-child(6),
+.sent-expense-table th:nth-child(7),
+.sent-expense-table td:nth-child(7) {
+  width: 15%;
+}
+
+.report-person-cell {
+  margin-inline: auto;
+  min-width: 0;
+  max-width: 180px;
+  text-align: center;
 }
 
 .tasks-table .table-actions {
@@ -1128,6 +1206,21 @@ td {
 .tasks-table .status-action {
   justify-content: center;
   flex-wrap: nowrap;
+}
+
+.report-table td.table-actions,
+.tasks-table td.table-actions {
+  display: table-cell;
+  min-width: 0;
+  padding-right: 10px;
+  text-align: center;
+  white-space: normal;
+}
+
+.report-table td.table-actions button,
+.tasks-table td.table-actions button {
+  margin: 3px;
+  vertical-align: middle;
 }
 
 .table-title {
@@ -1186,6 +1279,11 @@ td {
 
 .expense-settlement-summary strong,
 .expense-monthly-summary span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  min-width: 310px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #f8fbff;
@@ -1193,11 +1291,14 @@ td {
   padding: 6px 8px;
   font-size: 13px;
   font-weight: 900;
-  white-space: nowrap;
+  white-space: normal;
+  text-align: center;
 }
 
 .settlement-month-select {
-  min-height: 32px;
+  min-height: 34px;
+  width: 250px;
+  max-width: 100%;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fff;
@@ -1904,11 +2005,6 @@ td {
   background: #fffbeb;
 }
 
-.calendar-event.schedule-todo-event {
-  border-left-color: #16a34a;
-  background: #ecfdf5;
-}
-
 .calendar-event.shared-event {
   border-style: dashed;
   background: #f4f8ff;
@@ -2487,11 +2583,6 @@ td {
 .schedule-detail-list button:hover,
 .schedule-detail-list button:focus-visible {
   background: #eef5ff;
-}
-
-.schedule-detail-list .schedule-todo-detail {
-  border-left-color: #16a34a;
-  background: #ecfdf5;
 }
 
 .schedule-detail-list strong {

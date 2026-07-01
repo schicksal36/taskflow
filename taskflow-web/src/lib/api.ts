@@ -1377,6 +1377,13 @@ export function markAllNotificationsRead(token: string) {
   });
 }
 
+export function deleteAllNotifications(token: string) {
+  return apiFetch<unknown>("/notifications/delete-all/", {
+    method: "DELETE",
+    token,
+  });
+}
+
 export function deleteNotification(token: string, id: number) {
   return apiFetch<unknown>(`/notifications/${id}/`, {
     method: "DELETE",

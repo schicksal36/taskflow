@@ -84,6 +84,8 @@ const tabs = [
   { key: "completed", label: "완료" },
 ];
 
+const terminalWorkRequestStatuses = ["REJECTED", "CANCELED", "APPROVED", "COMPLETED"];
+
 function toDateInput(value?: string | null) {
   if (!value) {
     return "";
@@ -111,7 +113,7 @@ function isWorkRequest(item: UnifiedTask) {
 
 function isTerminal(item: UnifiedTask) {
   return isWorkRequest(item)
-    ? ["REJECTED", "CANCELED", "APPROVED", "COMPLETED"].includes(item.status)
+    ? terminalWorkRequestStatuses.includes(item.status)
     : ["DONE", "CANCELED"].includes(item.status);
 }
 
@@ -490,14 +492,23 @@ export default function TasksPage() {
     if (!accessToken) {
       return null;
     }
-    const isRequester = item.requester === user?.id;
-    const canEditWorkRequest = item.source !== "WORK_REQUEST" || !item.has_read_assignee;
+    const isRequester = String(item.requester ?? "") === String(user?.id ?? "");
+    const isTerminalWorkRequest = item.source === "WORK_REQUEST" && terminalWorkRequestStatuses.includes(item.status);
+    const canCancelWorkRequest = item.source === "WORK_REQUEST" && isRequester && !isTerminalWorkRequest;
+    const canReviseWorkRequest = item.source === "WORK_REQUEST" && isRequester && !isTerminalWorkRequest && !item.has_read_assignee;
+    const canReviseTodo = item.source === "TODO";
+    const hasActions = canCancelWorkRequest || canReviseWorkRequest || canReviseTodo;
+
+    if (!hasActions) {
+      return "-";
+    }
+
     return (
       <>
-        {item.source === "WORK_REQUEST" && isRequester && !["COMPLETED", "APPROVED", "CANCELED"].includes(item.status) && (
+        {canCancelWorkRequest && (
           <button className="ghost-button" onClick={() => runAction(() => cancelWorkRequest(accessToken, item.id))} type="button">취소</button>
         )}
-        {(item.source === "TODO" || (item.source === "WORK_REQUEST" && isRequester && canEditWorkRequest)) && (
+        {(canReviseTodo || canReviseWorkRequest) && (
           <>
             <button className="ghost-button" onClick={() => startEdit(item)} type="button">수정</button>
             <button className="danger-button" onClick={() => runAction(() => item.source === "TODO" ? deleteTodo(accessToken, item.id) : deleteWorkRequest(accessToken, item.id))} type="button">삭제</button>

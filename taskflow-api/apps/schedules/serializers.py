@@ -62,8 +62,6 @@ class ScheduleListSerializer(serializers.ModelSerializer):
     schedule_type = serializers.CharField(source="category", read_only=True)
     is_shared = serializers.SerializerMethodField()
     remind_at = serializers.DateTimeField(source="alert_at", read_only=True)
-    is_all_day = serializers.SerializerMethodField()
-    repeat_type = serializers.SerializerMethodField()
     participant_count = serializers.IntegerField(source="participants.count", read_only=True)
 
     class Meta:
@@ -109,14 +107,6 @@ class ScheduleListSerializer(serializers.ModelSerializer):
         """모든 일정은 공유 일정이므로 항상 True를 반환합니다."""
         return True
 
-    def get_is_all_day(self, obj):
-        """현재 모델은 종일 여부를 저장하지 않으므로 False로 응답합니다."""
-        return False
-
-    def get_repeat_type(self, obj):
-        """반복 일정 기능은 공유 일정 단일화 범위에서 제외되어 NONE으로 응답합니다."""
-        return "NONE"
-
 
 class ScheduleDetailSerializer(ScheduleListSerializer):
     """일정 상세 serializer. 참여자 목록과 반복/표시 정보를 함께 제공합니다."""
@@ -145,8 +135,7 @@ class ScheduleCreateUpdateSerializer(serializers.ModelSerializer):
         help_text="일정을 공유할 사용자 id 목록",
     )
     is_shared = serializers.BooleanField(required=False, write_only=True)
-    is_all_day = serializers.BooleanField(required=False, write_only=True)
-    repeat_type = serializers.CharField(required=False, write_only=True)
+    repeat_type = serializers.ChoiceField(choices=Schedule.RepeatType.choices, required=False)
 
     class Meta:
         model = Schedule
@@ -184,8 +173,6 @@ class ScheduleCreateUpdateSerializer(serializers.ModelSerializer):
         """일정 생성 후 participant_ids를 참여자 테이블로 분리 저장합니다."""
         participant_ids = validated_data.pop("participant_ids", [])
         validated_data.pop("is_shared", None)
-        validated_data.pop("is_all_day", None)
-        validated_data.pop("repeat_type", None)
         schedule = Schedule.objects.create(created_by=self.context["request"].user, **validated_data)
         for user_id in participant_ids:
             ScheduleParticipant.objects.get_or_create(schedule=schedule, user_id=user_id)
@@ -195,8 +182,6 @@ class ScheduleCreateUpdateSerializer(serializers.ModelSerializer):
         """일정 본문 수정 후 participant_ids가 있으면 참여자 목록을 교체합니다."""
         participant_ids = validated_data.pop("participant_ids", None)
         validated_data.pop("is_shared", None)
-        validated_data.pop("is_all_day", None)
-        validated_data.pop("repeat_type", None)
         instance = super().update(instance, validated_data)
         if participant_ids is not None:
             instance.participants.exclude(user_id__in=participant_ids).delete()

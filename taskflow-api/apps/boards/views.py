@@ -55,10 +55,15 @@ class BoardPostQuerysetMixin:
         return generics.get_object_or_404(self.visible_posts(), pk=pk)
 
     def ensure_author(self, post):
-        """게시글 작성자만 수정/삭제/고정/첨부 관리가 가능한지 확인합니다."""
+        """게시글 작성자만 수정/고정/첨부 관리가 가능한지 확인합니다."""
+        if post.author != self.request.user:
+            raise PermissionDenied("작성자만 처리할 수 있습니다.")
+
+    def ensure_deletable(self, post):
+        """작성자와 관리자는 게시글을 삭제할 수 있습니다."""
         role = getattr(self.request.user, "role", "")
         if post.author != self.request.user and role not in {"ADMIN", "CEO", "SUPERUSER"}:
-            raise PermissionDenied("작성자만 처리할 수 있습니다.")
+            raise PermissionDenied("작성자 또는 관리자만 삭제할 수 있습니다.")
 
 
 class BoardPostListCreateView(BoardPostQuerysetMixin, generics.ListCreateAPIView):
@@ -98,7 +103,7 @@ class BoardPostDetailView(BoardPostQuerysetMixin, generics.RetrieveUpdateDestroy
         serializer.save()
 
     def perform_destroy(self, instance):
-        self.ensure_author(instance)
+        self.ensure_deletable(instance)
         # 게시글은 이력 보존을 위해 실제 삭제 대신 목록에서 숨깁니다.
         instance.is_deleted = True
         instance.save(update_fields=["is_deleted"])

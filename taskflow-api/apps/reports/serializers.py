@@ -94,11 +94,27 @@ class ReportFileSerializer(serializers.ModelSerializer):
     """보고서 일반 첨부파일 연결 serializer."""
 
     original_name = serializers.CharField(source="media_file.original_name", read_only=True)
+    file_url = serializers.SerializerMethodField()
+    file_type = serializers.CharField(source="media_file.file_type", read_only=True)
+    mime_type = serializers.CharField(source="media_file.mime_type", read_only=True)
+    download_url = serializers.SerializerMethodField()
 
     class Meta:
         model = ReportFile
-        fields = ["id", "report", "media_file", "original_name", "uploaded_by", "file_category", "created_at"]
+        fields = ["id", "report", "media_file", "original_name", "file_url", "file_type", "mime_type", "download_url", "uploaded_by", "file_category", "created_at"]
         read_only_fields = ["report", "uploaded_by", "created_at"]
+
+    def get_file_url(self, obj):
+        request = self.context.get("request")
+        if not obj.media_file.file:
+            return None
+        url = obj.media_file.file.url
+        return request.build_absolute_uri(url) if request else url
+
+    def get_download_url(self, obj):
+        request = self.context.get("request")
+        url = f"/api/reports/files/{obj.id}/download/"
+        return request.build_absolute_uri(url) if request else url
 
 
 class ReportListSerializer(serializers.ModelSerializer):

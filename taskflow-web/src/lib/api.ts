@@ -316,6 +316,9 @@ export type WorkRequestFile = {
   work_request: number;
   media_file: number;
   original_name?: string;
+  file_url?: string | null;
+  file_type?: string;
+  mime_type?: string;
   download_url?: string;
   uploaded_by?: number;
   created_at?: string;
@@ -447,6 +450,10 @@ export type ReportFile = {
   report: number;
   media_file: number;
   original_name?: string;
+  file_url?: string | null;
+  file_type?: string;
+  mime_type?: string;
+  download_url?: string;
   uploaded_by?: number;
   file_category?: string;
   created_at?: string;
@@ -530,6 +537,9 @@ export type BoardPost = {
   id: number;
   author?: number;
   author_name?: string;
+  author_email?: string;
+  author_department?: string;
+  author_position?: string;
   board_type: string;
   title: string;
   content?: string;
@@ -557,11 +567,29 @@ export type BoardPostInput = {
   specific_user_ids?: number[];
 };
 
+export type BoardComment = {
+  id: number;
+  post: number;
+  author?: number;
+  author_name?: string;
+  author_email?: string;
+  author_department?: string;
+  author_position?: string;
+  parent?: number | null;
+  content: string;
+  is_deleted?: boolean;
+  created_at?: string;
+  updated_at?: string;
+};
+
 export type BoardFile = {
   id: number;
   post: number;
   media_file: number;
   original_name?: string;
+  file_url?: string | null;
+  file_type?: string;
+  mime_type?: string;
   download_url?: string;
   uploaded_by?: number;
   created_at?: string;
@@ -1183,6 +1211,10 @@ export function downloadReportFile(token: string, fileId: number, filename?: str
   return apiDownload(`/reports/files/${fileId}/download/`, token, filename || "report-attachment");
 }
 
+export function downloadAllReportFiles(token: string, reportId: number) {
+  return apiDownload(`/reports/${reportId}/files/download-all/`, token, `report-${reportId}-attachments.zip`);
+}
+
 export function deleteReport(token: string, id: number) {
   return apiFetch<unknown>(`/reports/${id}/`, {
     method: "DELETE",
@@ -1312,6 +1344,10 @@ export function fetchBoardNotices(token: string) {
   return apiFetch<ListShape<BoardPost>>("/boards/notices/", { token });
 }
 
+export function fetchBoardPost(token: string, id: number) {
+  return apiFetch<BoardPost>(`/boards/posts/${id}/`, { token });
+}
+
 export function createBoardPost(token: string, input: BoardPostInput) {
   return apiFetch<BoardPost>("/boards/posts/", {
     token,
@@ -1338,6 +1374,25 @@ export function attachBoardFile(token: string, postId: number, mediaFileId: numb
   return apiFetch<BoardFile>(`/boards/posts/${postId}/attachments/`, {
     token,
     body: { media_file: mediaFileId },
+  });
+}
+
+export function downloadBoardFile(token: string, fileId: number, filename?: string) {
+  return apiDownload(`/boards/files/${fileId}/download/`, token, filename || "board-attachment");
+}
+
+export function downloadAllBoardFiles(token: string, postId: number) {
+  return apiDownload(`/boards/posts/${postId}/attachments/download-all/`, token, `board-${postId}-attachments.zip`);
+}
+
+export function fetchBoardComments(token: string, postId: number) {
+  return apiFetch<ListShape<BoardComment>>(`/boards/posts/${postId}/comments/`, { token });
+}
+
+export function createBoardComment(token: string, postId: number, content: string) {
+  return apiFetch<BoardComment>(`/boards/posts/${postId}/comments/`, {
+    token,
+    body: { content },
   });
 }
 

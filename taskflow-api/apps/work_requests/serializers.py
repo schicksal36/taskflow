@@ -362,12 +362,22 @@ class WorkRequestFileSerializer(serializers.ModelSerializer):
     """
 
     original_name = serializers.CharField(source="media_file.original_name", read_only=True)
+    file_url = serializers.SerializerMethodField()
+    file_type = serializers.CharField(source="media_file.file_type", read_only=True)
+    mime_type = serializers.CharField(source="media_file.mime_type", read_only=True)
     download_url = serializers.SerializerMethodField()
 
     class Meta:
         model = WorkRequestFile
-        fields = ["id", "work_request", "media_file", "original_name", "download_url", "uploaded_by", "created_at"]
+        fields = ["id", "work_request", "media_file", "original_name", "file_url", "file_type", "mime_type", "download_url", "uploaded_by", "created_at"]
         read_only_fields = ["work_request", "uploaded_by", "created_at"]
+
+    def get_file_url(self, obj):
+        request = self.context.get("request")
+        if not obj.media_file.file:
+            return None
+        url = obj.media_file.file.url
+        return request.build_absolute_uri(url) if request else url
 
     def get_download_url(self, obj):
         """프론트가 바로 사용할 수 있는 다운로드 API 경로를 생성합니다."""

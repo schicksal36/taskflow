@@ -31,6 +31,7 @@ urlpatterns = [
     path("<int:pk>/expenses/items/", views.ExpenseItemListCreateView.as_view(), name="expense-items"),
     path("expenses/items/<int:item_id>/", views.ExpenseItemDetailView.as_view(), name="expense-item-detail"),
     path("expenses/items/<int:item_id>/receipts/", views.ExpenseReceiptListCreateView.as_view(), name="expense-receipts"),
+    path("<int:pk>/files/download-all/", views.ReportFileDownloadAllView.as_view(), name="report-files-download-all"),
     path("<int:pk>/files/", views.ReportFileListCreateView.as_view(), name="report-files"),
     path("<int:pk>/pdf/", views.ReportPdfDownloadView.as_view(), name="report-pdf-download"),
     path("<int:pk>/expenses/excel/", views.ExpenseExcelDownloadView.as_view(), name="expense-excel-download"),

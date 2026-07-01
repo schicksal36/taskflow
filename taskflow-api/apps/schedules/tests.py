@@ -71,6 +71,30 @@ class ScheduleApiTests(APITestCase):
         self.assertEqual(schedule.category, "현장 방문")
         self.assertIsNone(schedule.end_at)
 
+    def test_create_schedule_persists_all_day_and_repeat_type(self):
+        self.client.force_authenticate(self.owner)
+        start_at = timezone.now() + timezone.timedelta(days=1)
+
+        response = self.client.post(
+            "/api/schedules/",
+            {
+                "title": "반복 종일 일정",
+                "start_at": start_at.isoformat(),
+                "end_at": (start_at + timezone.timedelta(hours=23, minutes=59)).isoformat(),
+                "is_all_day": True,
+                "repeat_type": Schedule.RepeatType.DAILY,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        schedule = Schedule.objects.get(title="반복 종일 일정")
+        self.assertTrue(schedule.is_all_day)
+        self.assertEqual(schedule.repeat_type, Schedule.RepeatType.DAILY)
+        detail_response = self.client.get(f"/api/schedules/{schedule.id}/")
+        self.assertEqual(detail_response.data["is_all_day"], True)
+        self.assertEqual(detail_response.data["repeat_type"], Schedule.RepeatType.DAILY)
+
     def test_schedule_list_shows_other_users_events_without_edit_permission(self):
         start_at = timezone.now() + timezone.timedelta(days=1)
         schedule = Schedule.objects.create(

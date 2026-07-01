@@ -2,6 +2,7 @@ import { useRouter } from "next/router";
 import { FormEvent, KeyboardEvent, useEffect, useState } from "react";
 
 import { AppShell } from "@/components/AppShell";
+import { AttachmentList } from "@/components/AttachmentList";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   type AdminApprovalRequest,
@@ -83,108 +84,15 @@ function applicantLabel(item: AdminApprovalRequest) {
   return details === "-" ? item.applicant_email : `${item.applicant_email} / ${details}`;
 }
 
-const crcTable = Array.from({ length: 256 }, (_, index) => {
-  let current = index;
-  for (let bit = 0; bit < 8; bit += 1) {
-    current = current & 1 ? 0xedb88320 ^ (current >>> 1) : current >>> 1;
+function splitPersonLabel(value?: string | null) {
+  if (!value || value === "-") {
+    return { name: "-", details: "" };
   }
-  return current >>> 0;
-});
-
-function crc32(bytes: Uint8Array) {
-  let crc = 0xffffffff;
-  for (let index = 0; index < bytes.length; index += 1) {
-    const byte = bytes[index];
-    crc = crcTable[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  const match = value.match(/^(.*?)\s*\((.*)\)$/);
+  if (!match) {
+    return { name: value, details: "" };
   }
-  return (crc ^ 0xffffffff) >>> 0;
-}
-
-function dosDateTime(timestamp: number) {
-  const date = new Date(timestamp);
-  return {
-    date: ((date.getFullYear() - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate(),
-    time: (date.getHours() << 11) | (date.getMinutes() << 5) | Math.floor(date.getSeconds() / 2),
-  };
-}
-
-function writeUint16(view: DataView, offset: number, value: number) {
-  view.setUint16(offset, value, true);
-}
-
-function writeUint32(view: DataView, offset: number, value: number) {
-  view.setUint32(offset, value >>> 0, true);
-}
-
-function concatBytes(parts: Uint8Array[]) {
-  const output = new Uint8Array(parts.reduce((total, part) => total + part.length, 0));
-  let offset = 0;
-  for (const part of parts) {
-    output.set(part, offset);
-    offset += part.length;
-  }
-  return output;
-}
-
-async function createZipFile(files: File[]) {
-  const encoder = new TextEncoder();
-  const localParts: Uint8Array[] = [];
-  const centralParts: Uint8Array[] = [];
-  let offset = 0;
-
-  for (const file of files) {
-    const nameBytes = encoder.encode(file.name);
-    const data = new Uint8Array(await file.arrayBuffer());
-    const checksum = crc32(data);
-    const timestamp = dosDateTime(file.lastModified);
-
-    const localHeader = new Uint8Array(30 + nameBytes.length);
-    const localView = new DataView(localHeader.buffer);
-    writeUint32(localView, 0, 0x04034b50);
-    writeUint16(localView, 4, 20);
-    writeUint16(localView, 6, 0x0800);
-    writeUint16(localView, 8, 0);
-    writeUint16(localView, 10, timestamp.time);
-    writeUint16(localView, 12, timestamp.date);
-    writeUint32(localView, 14, checksum);
-    writeUint32(localView, 18, data.length);
-    writeUint32(localView, 22, data.length);
-    writeUint16(localView, 26, nameBytes.length);
-    localHeader.set(nameBytes, 30);
-
-    const centralHeader = new Uint8Array(46 + nameBytes.length);
-    const centralView = new DataView(centralHeader.buffer);
-    writeUint32(centralView, 0, 0x02014b50);
-    writeUint16(centralView, 4, 20);
-    writeUint16(centralView, 6, 20);
-    writeUint16(centralView, 8, 0x0800);
-    writeUint16(centralView, 10, 0);
-    writeUint16(centralView, 12, timestamp.time);
-    writeUint16(centralView, 14, timestamp.date);
-    writeUint32(centralView, 16, checksum);
-    writeUint32(centralView, 20, data.length);
-    writeUint32(centralView, 24, data.length);
-    writeUint16(centralView, 28, nameBytes.length);
-    writeUint32(centralView, 42, offset);
-    centralHeader.set(nameBytes, 46);
-
-    localParts.push(localHeader, data);
-    centralParts.push(centralHeader);
-    offset += localHeader.length + data.length;
-  }
-
-  const centralDirectory = concatBytes(centralParts);
-  const endHeader = new Uint8Array(22);
-  const endView = new DataView(endHeader.buffer);
-  writeUint32(endView, 0, 0x06054b50);
-  writeUint16(endView, 8, files.length);
-  writeUint16(endView, 10, files.length);
-  writeUint32(endView, 12, centralDirectory.length);
-  writeUint32(endView, 16, offset);
-
-  return new File([concatBytes([...localParts, centralDirectory, endHeader])], `attachments-${Date.now()}.zip`, {
-    type: "application/zip",
-  });
+  return { name: match[1], details: match[2] };
 }
 
 export default function WorkRequestsPage() {
@@ -367,25 +275,8 @@ export default function WorkRequestsPage() {
     });
   }
 
-  async function handleAttachmentFiles(files: File[]) {
-    if (!files.length) {
-      setAttachmentFiles([]);
-      return;
-    }
-    if (files.length === 1) {
-      setAttachmentFiles(files);
-      return;
-    }
-
-    setIsSaving(true);
-    setMessage("");
-    try {
-      setAttachmentFiles([await createZipFile(files)]);
-    } catch {
-      setMessage("첨부파일을 zip 파일로 변환하지 못했습니다.");
-    } finally {
-      setIsSaving(false);
-    }
+  function handleAttachmentFiles(files: File[]) {
+    setAttachmentFiles(files);
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -539,22 +430,12 @@ export default function WorkRequestsPage() {
   }
 
   function renderDetailFiles(item: WorkRequest) {
-    if (!item.files?.length) {
-      return <p className="report-detail-empty">첨부파일이 없습니다.</p>;
-    }
     return (
-      <div className="attachment-list">
-        {item.files.map((file) => (
-          <button className="text-button" key={file.id} onClick={() => handleDownloadFile(item, file.id, file.original_name)} type="button">
-            {file.original_name || `첨부파일 ${file.id}`}
-          </button>
-        ))}
-        {item.files.length > 1 && (
-          <button className="ghost-button" onClick={() => handleDownloadAllFiles(item)} type="button">
-            전체 다운로드
-          </button>
-        )}
-      </div>
+      <AttachmentList
+        files={item.files}
+        onDownload={(file) => handleDownloadFile(item, file.id, file.original_name)}
+        onDownloadAll={item.files && item.files.length > 1 ? () => handleDownloadAllFiles(item) : undefined}
+      />
     );
   }
 
@@ -566,9 +447,15 @@ export default function WorkRequestsPage() {
       <div className="recipient-detail-status-list">
         {item.read_records.map((record) => {
           const label = [record.department, record.position].filter(Boolean).join(" / ");
+          const person = splitPersonLabel(label ? `${record.name} (${label})` : record.name);
           return (
             <div key={record.id}>
-              <strong>{record.name}{label ? ` (${label})` : ""}</strong>
+              <div className="recipient-detail-person">
+                <div className="person-cell">
+                  <strong>{person.name}</strong>
+                  {person.details && <span>{person.details}</span>}
+                </div>
+              </div>
               <span>{record.is_read ? "읽음" : "안읽음"}</span>
               {record.read_at && <small>{formatDateTime(record.read_at)}</small>}
             </div>

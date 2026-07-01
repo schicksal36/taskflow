@@ -11,7 +11,10 @@ class BoardPostListSerializer(serializers.ModelSerializer):
     목록에서는 본문 전체를 제외하고 카운트/공지/고정 상태를 중심으로 내려줍니다.
     """
 
-    author_name = serializers.CharField(source="author.username", read_only=True)
+    author_name = serializers.SerializerMethodField()
+    author_email = serializers.EmailField(source="author.email", read_only=True)
+    author_department = serializers.CharField(source="author.department", read_only=True)
+    author_position = serializers.CharField(source="author.position", read_only=True)
     file_count = serializers.IntegerField(source="files.count", read_only=True)
     is_locked = serializers.SerializerMethodField()
 
@@ -21,6 +24,9 @@ class BoardPostListSerializer(serializers.ModelSerializer):
             "id",
             "author",
             "author_name",
+            "author_email",
+            "author_department",
+            "author_position",
             "board_type",
             "title",
             "is_notice",
@@ -35,6 +41,9 @@ class BoardPostListSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = ["author", "view_count", "like_count", "comment_count", "created_at", "updated_at"]
+
+    def get_author_name(self, obj):
+        return obj.author.first_name or obj.author.email or obj.author.username
 
     def get_is_locked(self, obj):
         request = self.context.get("request")
@@ -107,12 +116,31 @@ class BoardPostPinSerializer(serializers.ModelSerializer):
 class BoardCommentSerializer(serializers.ModelSerializer):
     """게시글 댓글 serializer."""
 
-    author_name = serializers.CharField(source="author.username", read_only=True)
+    author_name = serializers.SerializerMethodField()
+    author_email = serializers.EmailField(source="author.email", read_only=True)
+    author_department = serializers.CharField(source="author.department", read_only=True)
+    author_position = serializers.CharField(source="author.position", read_only=True)
 
     class Meta:
         model = BoardComment
-        fields = ["id", "post", "author", "author_name", "parent", "content", "is_deleted", "created_at", "updated_at"]
+        fields = [
+            "id",
+            "post",
+            "author",
+            "author_name",
+            "author_email",
+            "author_department",
+            "author_position",
+            "parent",
+            "content",
+            "is_deleted",
+            "created_at",
+            "updated_at",
+        ]
         read_only_fields = ["post", "author", "is_deleted", "created_at", "updated_at"]
+
+    def get_author_name(self, obj):
+        return obj.author.first_name or obj.author.email or obj.author.username
 
 
 class BoardLikeSerializer(serializers.ModelSerializer):
@@ -128,15 +156,25 @@ class BoardFileSerializer(serializers.ModelSerializer):
     """게시글 첨부파일 연결 serializer."""
 
     original_name = serializers.CharField(source="media_file.original_name", read_only=True)
+    file_url = serializers.SerializerMethodField()
+    file_type = serializers.CharField(source="media_file.file_type", read_only=True)
+    mime_type = serializers.CharField(source="media_file.mime_type", read_only=True)
     download_url = serializers.SerializerMethodField()
 
     class Meta:
         model = BoardFile
-        fields = ["id", "post", "media_file", "original_name", "download_url", "uploaded_by", "created_at"]
+        fields = ["id", "post", "media_file", "original_name", "file_url", "file_type", "mime_type", "download_url", "uploaded_by", "created_at"]
         read_only_fields = ["post", "uploaded_by", "created_at"]
+
+    def get_file_url(self, obj):
+        request = self.context.get("request")
+        if not obj.media_file.file:
+            return None
+        url = obj.media_file.file.url
+        return request.build_absolute_uri(url) if request else url
 
     def get_download_url(self, obj):
         """프론트가 사용할 다운로드 API 경로를 만듭니다."""
         request = self.context.get("request")
-        url = f"/api/media/files/{obj.media_file_id}/download/"
+        url = f"/api/boards/files/{obj.id}/download/"
         return request.build_absolute_uri(url) if request else url

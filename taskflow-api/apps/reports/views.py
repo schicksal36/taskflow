@@ -7,7 +7,9 @@
 """
 
 from datetime import datetime, timedelta
+from io import BytesIO
 from uuid import uuid4
+from zipfile import ZipFile
 
 from django.http import FileResponse, HttpResponse
 from django.db.models import Count, Q, Sum
@@ -859,8 +861,7 @@ class ReportFileDetailView(ReportQuerysetMixin, generics.RetrieveDestroyAPIView)
     lookup_url_kwarg = "file_id"
 
     def get_queryset(self):
-        user = self.request.user
-        return ReportFile.objects.filter(Q(report__writer=user) | Q(report__approver=user)).distinct()
+        return ReportFile.objects.filter(report__in=self.related_queryset()).distinct()
 
     def perform_destroy(self, instance):
         if instance.uploaded_by != self.request.user and instance.report.writer != self.request.user:
@@ -872,13 +873,28 @@ class ReportFileDownloadView(ReportQuerysetMixin, APIView):
     """보고서 첨부파일의 실제 파일 스트림을 반환합니다."""
 
     def get(self, request, file_id):
-        user = request.user
         report_file = generics.get_object_or_404(
-            ReportFile.objects.filter(Q(report__writer=user) | Q(report__approver=user)).distinct(),
+            ReportFile.objects.filter(report__in=self.related_queryset()).distinct(),
             pk=file_id,
         )
         media = report_file.media_file
         return FileResponse(media.file.open("rb"), as_attachment=True, filename=media.original_name)
+
+
+class ReportFileDownloadAllView(ReportQuerysetMixin, APIView):
+    """보고서 첨부파일 전체 zip 다운로드 API."""
+
+    def get(self, request, pk):
+        report = self.get_report(pk)
+        buffer = BytesIO()
+        with ZipFile(buffer, "w") as zip_file:
+            for report_file in ReportFile.objects.filter(report=report).select_related("media_file"):
+                media = report_file.media_file
+                zip_file.writestr(media.original_name, media.file.read())
+        buffer.seek(0)
+        response = HttpResponse(buffer.getvalue(), content_type="application/zip")
+        response["Content-Disposition"] = f'attachment; filename="report-{report.id}-attachments.zip"'
+        return response
 
 
 class ReportAsyncGenerateView(ReportQuerysetMixin, APIView):

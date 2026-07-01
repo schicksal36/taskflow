@@ -12,6 +12,7 @@ import { useRouter } from "next/router";
 import { FormEvent, KeyboardEvent, useEffect, useMemo, useState } from "react";
 
 import { AppShell } from "@/components/AppShell";
+import { AttachmentList } from "@/components/AttachmentList";
 import { StatCard } from "@/components/StatCard";
 import { useAuth } from "@/contexts/AuthContext";
 import {
@@ -30,6 +31,7 @@ import {
   createReport,
   deleteReport,
   describeApiError,
+  downloadAllReportFiles,
   downloadReportFile,
   fetchReport,
   fetchReports,
@@ -221,7 +223,8 @@ export default function ReportsPage() {
   const [manualRecipients, setManualRecipients] = useState<string[]>([]);
   const [recipientSearch, setRecipientSearch] = useState("");
   const [recipientResults, setRecipientResults] = useState<UserListItem[]>([]);
-  const [reportAttachment, setReportAttachment] = useState<File | null>(null);
+  const [reportAttachments, setReportAttachments] = useState<File[]>([]);
+  const [existingReportFiles, setExistingReportFiles] = useState<ReportFile[]>([]);
   const [returnTarget, setReturnTarget] = useState<Report | null>(null);
   const [detailTarget, setDetailTarget] = useState<Report | null>(null);
   const [expenseDetailTarget, setExpenseDetailTarget] = useState<Report | null>(null);
@@ -449,7 +452,8 @@ export default function ReportsPage() {
     setManualRecipients([]);
     setRecipientSearch("");
     setRecipientResults([]);
-    setReportAttachment(null);
+    setReportAttachments([]);
+    setExistingReportFiles([]);
     setIsEditorOpen(false);
   }
 
@@ -465,7 +469,8 @@ export default function ReportsPage() {
     setManualRecipients([]);
     setRecipientSearch("");
     setRecipientResults([]);
-    setReportAttachment(null);
+    setReportAttachments([]);
+    setExistingReportFiles([]);
     setIsEditorOpen(true);
   }
 
@@ -493,7 +498,8 @@ export default function ReportsPage() {
     setManualRecipients([]);
     setRecipientSearch("");
     setRecipientResults([]);
-    setReportAttachment(null);
+    setReportAttachments([]);
+    setExistingReportFiles(item.files ?? []);
     const firstExpenseItem = item.expense_items?.[0];
     setExpenseItem(firstExpenseItem
       ? {
@@ -580,15 +586,17 @@ export default function ReportsPage() {
     setManualRecipients((current) => current.filter((entry) => entry !== value));
   }
 
-  async function attachSelectedReportFile(reportId: number) {
-    if (!accessToken || !reportAttachment) {
+  async function attachSelectedReportFiles(reportId: number) {
+    if (!accessToken || !reportAttachments.length) {
       return;
     }
-    const media = await uploadMediaFile(accessToken, reportAttachment, {
-      target_app: "reports",
-      target_id: reportId,
-    });
-    await attachReportFile(accessToken, reportId, media.id);
+    for (const file of reportAttachments) {
+      const media = await uploadMediaFile(accessToken, file, {
+        target_app: "reports",
+        target_id: reportId,
+      });
+      await attachReportFile(accessToken, reportId, media.id);
+    }
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -631,7 +639,7 @@ export default function ReportsPage() {
       }
       const reportId = savedReport.id ?? editingId;
       if (reportId) {
-        await attachSelectedReportFile(reportId);
+        await attachSelectedReportFiles(reportId);
       }
       resetForm();
       await loadItems();
@@ -661,6 +669,17 @@ export default function ReportsPage() {
     }
     try {
       await downloadReportFile(accessToken, file.id, file.original_name);
+    } catch (error) {
+      setMessage(describeApiError(error));
+    }
+  }
+
+  async function handleDownloadAllReportFiles(report: Report) {
+    if (!accessToken) {
+      return;
+    }
+    try {
+      await downloadAllReportFiles(accessToken, report.id);
     } catch (error) {
       setMessage(describeApiError(error));
     }
@@ -702,18 +721,13 @@ export default function ReportsPage() {
     }
   }
 
-  function renderReportFiles(files?: ReportFile[]) {
-    if (!files?.length) {
-      return null;
-    }
+  function renderReportFiles(files?: ReportFile[], report?: Report) {
     return (
-      <div className="attachment-list">
-        {files.map((file) => (
-          <button className="text-button" key={file.id} onClick={() => handleDownloadReportFile(file)} type="button">
-            {file.original_name || `첨부파일 ${file.id}`}
-          </button>
-        ))}
-      </div>
+      <AttachmentList
+        files={files}
+        onDownload={handleDownloadReportFile}
+        onDownloadAll={report && files && files.length > 1 ? () => handleDownloadAllReportFiles(report) : undefined}
+      />
     );
   }
 
@@ -765,26 +779,21 @@ export default function ReportsPage() {
     );
   }
 
+  function recipientStatusTime(recipient: NonNullable<Report["recipients"]>[number]) {
+    return recipient.confirmed_at || recipient.returned_at || recipient.read_at;
+  }
+
   function renderRecipientDetailStatuses(item: Report) {
     if (!item.recipients?.length) {
-      return <p className="report-detail-empty">수신자가 없습니다.</p>;
+      return "-";
     }
     return (
-      <div className="recipient-detail-status-list">
+      <div className="recipient-status-summary">
         {item.recipients.map((recipient) => {
-          const status = recipient.confirmed_at
-            ? "확인완료"
-            : recipient.returned_at
-              ? "보완요청"
-              : recipient.is_read
-                ? "읽음"
-                : "안읽음";
-          const statusTime = recipient.confirmed_at || recipient.returned_at || recipient.read_at;
+          const statusTime = recipientStatusTime(recipient);
           return (
             <div key={recipient.id}>
-              <strong>{recipientLabel(recipient)}</strong>
-              <span>{status}</span>
-              <small>{statusTime ? formatDateTime(statusTime) : "수신 시간 없음"}</small>
+              <span className="recipient-status-time">{statusTime ? formatDateTime(statusTime) : "-"}</span>
             </div>
           );
         })}
@@ -1487,10 +1496,16 @@ export default function ReportsPage() {
               <label>
                 <dt>첨부</dt>
                 <dd>
-                  <input onChange={(event) => setReportAttachment(event.target.files?.[0] ?? null)} type="file" />
-                  {reportAttachment && (
-                    <button className="text-button" onClick={() => setReportAttachment(null)} type="button">
-                      선택 해제: {reportAttachment.name}
+                  <input multiple onChange={(event) => setReportAttachments(Array.from(event.target.files ?? []))} type="file" />
+                  {editingId && (
+                    <div className="existing-attachment-list">
+                      <span>기존 첨부</span>
+                      {renderReportFiles(existingReportFiles)}
+                    </div>
+                  )}
+                  {!!reportAttachments.length && (
+                    <button className="text-button" onClick={() => setReportAttachments([])} type="button">
+                      선택 해제: {reportAttachments.map((file) => file.name).join(", ")}
                     </button>
                   )}
                 </dd>
@@ -1638,11 +1653,15 @@ export default function ReportsPage() {
               </div>
               <div>
                 <dt>작성자</dt>
-                <dd>{reportWriterLabel(detailTarget)}</dd>
+                <dd>{renderPersonLabel(reportWriterLabel(detailTarget))}</dd>
               </div>
               <div>
                 <dt>수신자</dt>
                 <dd>{renderRecipientNames(detailTarget)}</dd>
+              </div>
+              <div>
+                <dt>수신시간</dt>
+                <dd>{renderRecipientDetailStatuses(detailTarget)}</dd>
               </div>
               {detailTarget.report_type === "EXPENSE_REPORT" && (
                 <div>
@@ -1659,7 +1678,7 @@ export default function ReportsPage() {
 
             <section className="report-detail-section">
               <h3>첨부</h3>
-              {renderReportFiles(detailTarget.files) || <p className="report-detail-empty">첨부파일이 없습니다.</p>}
+              {renderReportFiles(detailTarget.files, detailTarget)}
             </section>
 
             {detailTarget.report_type === "EXPENSE_REPORT" && (
@@ -1674,10 +1693,6 @@ export default function ReportsPage() {
               </section>
             )}
 
-            <section className="report-detail-section">
-              <h3>수신 상태</h3>
-              {renderRecipientDetailStatuses(detailTarget)}
-            </section>
           </div>
         </div>
       )}

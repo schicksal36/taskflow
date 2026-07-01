@@ -1,15 +1,23 @@
 import { FormEvent, useEffect, useState } from "react";
 
 import { AppShell } from "@/components/AppShell";
+import { AttachmentList } from "@/components/AttachmentList";
 import { useAuth } from "@/contexts/AuthContext";
 import {
+  type BoardComment,
+  type BoardFile,
   type BoardPost,
   type BoardPostInput,
   type UserListItem,
   attachBoardFile,
+  createBoardComment,
   createBoardPost,
   deleteBoardPost,
   describeApiError,
+  downloadAllBoardFiles,
+  downloadBoardFile,
+  fetchBoardPost,
+  fetchBoardComments,
   fetchBoardPosts,
   fetchUsers,
   toArray,
@@ -57,10 +65,15 @@ export function BoardsPageContent({
   const [userSearch, setUserSearch] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [detailTarget, setDetailTarget] = useState<BoardPost | null>(null);
+  const [detailComments, setDetailComments] = useState<BoardComment[]>([]);
+  const [commentInput, setCommentInput] = useState("");
+  const [selectedDeleteIds, setSelectedDeleteIds] = useState<number[]>([]);
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [isCommentSaving, setIsCommentSaving] = useState(false);
   const [searchInput, setSearchInput] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const [boardTypeFilter, setBoardTypeFilter] = useState("");
@@ -79,6 +92,7 @@ export function BoardsPageContent({
         targetTypes.map((boardType) => fetchBoardPosts(accessToken, boardType, searchTerm)),
       );
       setItems(responses.flatMap((response) => toArray(response)));
+      setSelectedDeleteIds([]);
     } catch (error) {
       setMessage(describeApiError(error));
     } finally {
@@ -141,6 +155,8 @@ export function BoardsPageContent({
       specific_user_ids: item.specific_user_ids ?? [],
     });
     setSpecificUserIds(item.specific_user_ids ?? []);
+    setFiles([]);
+    setUserSearch("");
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -191,7 +207,96 @@ export function BoardsPageContent({
 
     try {
       await deleteBoardPost(accessToken, id);
+      setSelectedDeleteIds((current) => current.filter((value) => value !== id));
       await loadItems();
+    } catch (error) {
+      setMessage(describeApiError(error));
+    }
+  }
+
+  async function handleBulkDelete() {
+    if (!accessToken || !selectedDeleteIds.length) {
+      return;
+    }
+
+    try {
+      await Promise.all(selectedDeleteIds.map((id) => deleteBoardPost(accessToken, id)));
+      setSelectedDeleteIds([]);
+      await loadItems();
+    } catch (error) {
+      setMessage(describeApiError(error));
+    }
+  }
+
+  async function openDetail(item: BoardPost) {
+    if (!accessToken) {
+      return;
+    }
+
+    setMessage("");
+    try {
+      const [post, comments] = await Promise.all([
+        fetchBoardPost(accessToken, item.id),
+        fetchBoardComments(accessToken, item.id),
+      ]);
+      setDetailTarget(post);
+      setDetailComments(toArray(comments));
+      setCommentInput("");
+      await loadItems();
+    } catch (error) {
+      setMessage(describeApiError(error));
+    }
+  }
+
+  async function refreshDetail(postId: number) {
+    if (!accessToken) {
+      return;
+    }
+    const [post, comments] = await Promise.all([
+      fetchBoardPost(accessToken, postId),
+      fetchBoardComments(accessToken, postId),
+    ]);
+    setDetailTarget(post);
+    setDetailComments(toArray(comments));
+  }
+
+  async function handleSubmitComment(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!accessToken || !detailTarget || !commentInput.trim()) {
+      return;
+    }
+
+    setIsCommentSaving(true);
+    setMessage("");
+    try {
+      await createBoardComment(accessToken, detailTarget.id, commentInput.trim());
+      setCommentInput("");
+      await refreshDetail(detailTarget.id);
+      await loadItems();
+    } catch (error) {
+      setMessage(describeApiError(error));
+    } finally {
+      setIsCommentSaving(false);
+    }
+  }
+
+  async function handleDownloadFile(file: BoardFile) {
+    if (!accessToken) {
+      return;
+    }
+    try {
+      await downloadBoardFile(accessToken, file.id, file.original_name);
+    } catch (error) {
+      setMessage(describeApiError(error));
+    }
+  }
+
+  async function handleDownloadAllFiles(item: BoardPost) {
+    if (!accessToken) {
+      return;
+    }
+    try {
+      await downloadAllBoardFiles(accessToken, item.id);
     } catch (error) {
       setMessage(describeApiError(error));
     }
@@ -209,6 +314,57 @@ export function BoardsPageContent({
     return [item.display_name, item.email, item.department].filter(Boolean).some((value) => String(value).toLowerCase().includes(keyword));
   });
   const canFilterBoardType = !fixedBoardType && allowedTypes.length > 1;
+  const canDeletePost = (item: BoardPost) => isAdmin || item.author === user?.id;
+  const canEditPost = (item: BoardPost) => !isAdmin && item.author === user?.id;
+  const deletableItems = items.filter(canDeletePost);
+  const allDeletableSelected = deletableItems.length > 0 && deletableItems.every((item) => selectedDeleteIds.includes(item.id));
+
+  function toggleDeleteSelection(id: number) {
+    setSelectedDeleteIds((current) => (current.includes(id) ? current.filter((value) => value !== id) : [...current, id]));
+  }
+
+  function toggleAllDeleteSelection() {
+    setSelectedDeleteIds(allDeletableSelected ? [] : deletableItems.map((item) => item.id));
+  }
+
+  function personLabel(name?: string, email?: string, department?: string, position?: string) {
+    const displayName = name || email || "-";
+    const details = [department, position].filter(Boolean);
+    return { name: displayName, details: details.join(" / ") };
+  }
+
+  function authorLabel(item: BoardPost) {
+    const name = item.author_name || item.author_email || "-";
+    const details = [item.author_department, item.author_position].filter(Boolean);
+    return { name, details: details.join(" / ") };
+  }
+
+  function renderPerson(person: { name: string; details: string }) {
+    return (
+      <div className="person-cell">
+        <strong>{person.name}</strong>
+        {person.details && <span>{person.details}</span>}
+      </div>
+    );
+  }
+
+  function renderAuthor(item: BoardPost) {
+    return renderPerson(authorLabel(item));
+  }
+
+  function renderCommentAuthor(comment: BoardComment) {
+    return renderPerson(personLabel(comment.author_name, comment.author_email, comment.author_department, comment.author_position));
+  }
+
+  function renderDetailFiles(item: BoardPost) {
+    return (
+      <AttachmentList
+        files={item.files}
+        onDownload={handleDownloadFile}
+        onDownloadAll={item.files && item.files.length > 1 ? () => handleDownloadAllFiles(item) : undefined}
+      />
+    );
+  }
 
   return (
     <AppShell title={title} description={description}>
@@ -241,6 +397,11 @@ export function BoardsPageContent({
               </label>
             )}
             <div className="table-actions">
+              {!!selectedDeleteIds.length && (
+                <button className="danger-button" onClick={handleBulkDelete} type="button">
+                  선택 삭제 {selectedDeleteIds.length}
+                </button>
+              )}
               <button className="primary-button" type="submit">
                 검색
               </button>
@@ -258,7 +419,15 @@ export function BoardsPageContent({
             <table>
               <thead>
                 <tr>
-                  <th>게시판</th>
+                  <th>
+                    <input
+                      aria-label="삭제 대상 전체 선택"
+                      checked={allDeletableSelected}
+                      disabled={!deletableItems.length}
+                      onChange={toggleAllDeleteSelection}
+                      type="checkbox"
+                    />
+                  </th>
                   <th>제목</th>
                   <th>작성자</th>
                   <th>첨부</th>
@@ -269,19 +438,33 @@ export function BoardsPageContent({
               <tbody>
                 {items.map((item) => (
                   <tr key={item.id}>
-                    <td>{labelOf(boardTypeLabels, item.board_type)}</td>
+                    <td>
+                      {canDeletePost(item) && (
+                        <input
+                          aria-label={`${item.title} 삭제 선택`}
+                          checked={selectedDeleteIds.includes(item.id)}
+                          onChange={() => toggleDeleteSelection(item.id)}
+                          type="checkbox"
+                        />
+                      )}
+                    </td>
                     <td>
                       {item.is_locked && <span aria-label="잠금">🔒 </span>}
-                      {item.is_pinned && <span className="status-pill muted">고정</span>} {item.title}
+                      {item.is_pinned && <span className="status-pill muted">고정</span>}{" "}
+                      <button className="table-title-button" onClick={() => openDetail(item)} type="button">
+                        {item.title}
+                      </button>
                     </td>
-                    <td>{item.author_name || "-"}</td>
+                    <td>{renderAuthor(item)}</td>
                     <td>{item.file_count ?? 0}</td>
                     <td>{formatDateTime(item.created_at)}</td>
                     <td className="table-actions">
-                      <button className="ghost-button" onClick={() => startEdit(item)} type="button">
-                        수정
-                      </button>
-                      {(isAdmin || item.author === user?.id) && (
+                      {canEditPost(item) && (
+                        <button className="ghost-button" onClick={() => startEdit(item)} type="button">
+                          수정
+                        </button>
+                      )}
+                      {canDeletePost(item) && (
                         <button className="danger-button" onClick={() => handleDelete(item.id)} type="button">
                           삭제
                         </button>
@@ -299,6 +482,75 @@ export function BoardsPageContent({
           </div>
         </section>
       </section>
+
+      {detailTarget && (
+        <div className="modal-backdrop">
+          <div className="modal-panel report-detail-modal">
+            <div className="panel-head">
+              <h2>{fixedBoardType ? "자료 내용" : "게시글 내용"}</h2>
+              <button className="ghost-button" onClick={() => setDetailTarget(null)} type="button">
+                닫기
+              </button>
+            </div>
+
+            <div className="report-detail-head">
+              <strong>{detailTarget.title}</strong>
+              {detailTarget.is_pinned && <span>고정</span>}
+            </div>
+
+            <dl className="report-detail-meta">
+              <div>
+                <dt>작성자</dt>
+                <dd>{renderAuthor(detailTarget)}</dd>
+              </div>
+              <div>
+                <dt>작성일</dt>
+                <dd>{formatDateTime(detailTarget.created_at)}</dd>
+              </div>
+              <div>
+                <dt>첨부</dt>
+                <dd>{detailTarget.files?.length ?? detailTarget.file_count ?? 0}개</dd>
+              </div>
+            </dl>
+
+            <section className="report-detail-section">
+              <h3>내용</h3>
+              <p className="report-detail-content">{detailTarget.content?.trim() || "작성된 내용이 없습니다."}</p>
+            </section>
+
+            <section className="report-detail-section">
+              <h3>첨부</h3>
+              {renderDetailFiles(detailTarget)}
+            </section>
+
+            <section className="report-detail-section">
+              <h3>댓글</h3>
+              <div className="comment-list">
+                {detailComments.map((comment) => (
+                  <article className="comment-card" key={comment.id}>
+                    <div className="comment-card-head">
+                      {renderCommentAuthor(comment)}
+                      <time>{formatDateTime(comment.created_at)}</time>
+                    </div>
+                    <p>{comment.content}</p>
+                  </article>
+                ))}
+                {!detailComments.length && <p className="report-detail-empty">댓글이 없습니다.</p>}
+              </div>
+              <form className="comment-form" onSubmit={handleSubmitComment}>
+                <textarea
+                  onChange={(event) => setCommentInput(event.target.value)}
+                  placeholder="댓글 작성"
+                  value={commentInput}
+                />
+                <button className="primary-button" disabled={isCommentSaving || !commentInput.trim()} type="submit">
+                  {isCommentSaving ? "등록 중" : "댓글 등록"}
+                </button>
+              </form>
+            </section>
+          </div>
+        </div>
+      )}
 
       {isEditorOpen && (
         <div className="modal-backdrop">

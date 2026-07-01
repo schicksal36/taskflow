@@ -24,6 +24,10 @@ class Schedule(TimeStampedModel):
         TODO = "TODO", "할일"
         WORK_REQUEST = "WORK_REQUEST", "업무요청"
 
+    class RepeatType(models.TextChoices):
+        NONE = "NONE", "반복 안함"
+        DAILY = "DAILY", "매일"
+
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="created_schedules")
     title = models.CharField(max_length=200)  # 일정 제목
     description = models.TextField(blank=True)  # 일정 상세 설명
@@ -33,6 +37,8 @@ class Schedule(TimeStampedModel):
     color = models.CharField(max_length=7, default="#4A90D9")  # HEX 색상
     alert_at = models.DateTimeField(null=True, blank=True)  # 알림 일시
     category = models.CharField(max_length=50, blank=True)  # 공유 일정 구분
+    is_all_day = models.BooleanField(default=False)  # 종일 일정 여부
+    repeat_type = models.CharField(max_length=20, choices=RepeatType.choices, default=RepeatType.NONE)  # 반복 일정 유형
 
     class Meta:
         # 캘린더는 시간 순서 표시가 기본이므로 start_at 기준으로 정렬합니다.

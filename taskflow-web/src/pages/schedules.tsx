@@ -140,10 +140,10 @@ function scheduleOwnerLabel(item: Schedule) {
 
 function userLabel(user: UserListItem) {
   const name = user.first_name || user.display_name || "이름 미등록";
-  const department = user.department || "소속 미등록";
-  const position = user.position || "직함 미등록";
+  const details = [user.department, user.position].filter(Boolean);
   const email = user.email || user.username;
-  return email ? `${name} (${department} / ${position}) · ${email}` : `${name} (${department} / ${position})`;
+  const label = details.length ? `${name} (${details.join(" / ")})` : name;
+  return email ? `${label} · ${email}` : label;
 }
 
 function participantUserFromSchedule(item: NonNullable<Schedule["participants"]>[number]): UserListItem {
@@ -168,7 +168,12 @@ function toDateTimeInput(value?: string | null) {
     return value.slice(0, 16);
   }
 
-  return date.toISOString().slice(0, 16);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
 }
 
 function splitDateTimeInput(value?: string | null) {
@@ -186,14 +191,6 @@ function combineDateTimeParts(date: string, time: string) {
 
 function isMultiDayRange(startDate: string, endDate: string) {
   return Boolean(startDate && endDate && startDate !== endDate);
-}
-
-function normalizeTimeValue(value: string) {
-  const digits = value.replace(/\D/g, "").slice(0, 4);
-  if (digits.length <= 2) {
-    return digits;
-  }
-  return `${digits.slice(0, -2).padStart(2, "0")}:${digits.slice(-2)}`;
 }
 
 function submissionTime(value: string, fallbackTime: string) {
@@ -215,15 +212,30 @@ function withSubmissionTime(date: string, time: string, fallbackTime: string) {
 function cleanInput(input: ScheduleInput): ScheduleInput {
   const start = splitDateTimeInput(input.start_at);
   const end = splitDateTimeInput(input.end_at);
-  const timeOptional = Boolean(input.is_all_day || isMultiDayRange(start.date, end.date));
+  const endDate = end.date || start.date;
+
+  if (input.is_all_day) {
+    return {
+      ...input,
+      is_shared: true,
+      start_at: start.date ? `${start.date}T00:00` : "",
+      end_at: endDate ? `${endDate}T23:59` : null,
+      remind_at: null,
+      location: input.location ?? "",
+      repeat_type: input.repeat_type || "NONE",
+    };
+  }
+
+  const timeOptional = isMultiDayRange(start.date, end.date);
 
   return {
     ...input,
     is_shared: true,
     start_at: withSubmissionTime(start.date, start.time, timeOptional ? "00:00" : "09:00"),
-    end_at: end.date ? withSubmissionTime(end.date, end.time, timeOptional ? "23:59" : start.time || "10:00") : null,
-    remind_at: input.remind_at || null,
+    end_at: endDate ? withSubmissionTime(endDate, end.time, timeOptional ? "23:59" : start.time || "10:00") : null,
+    remind_at: null,
     location: input.location ?? "",
+    repeat_type: input.repeat_type || "NONE",
   };
 }
 
@@ -497,8 +509,7 @@ export default function SchedulesPage() {
 
   const startDateTime = splitDateTimeInput(form.start_at);
   const endDateTime = splitDateTimeInput(form.end_at);
-  const remindDateTime = splitDateTimeInput(form.remind_at);
-  const timeOptional = Boolean(form.is_all_day || isMultiDayRange(startDateTime.date, endDateTime.date));
+  const isAllDay = Boolean(form.is_all_day);
 
   return (
     <AppShell
@@ -737,27 +748,25 @@ export default function SchedulesPage() {
                   type="date"
                   value={startDateTime.date}
                 />
-                <input
-                  aria-label="시작시간"
-                  className="time-text-input"
-                  inputMode="numeric"
-                  maxLength={5}
-                  onChange={(event) => setForm((current) => ({ ...current, start_at: combineDateTimeParts(startDateTime.date, normalizeTimeValue(event.target.value)) }))}
-                  pattern="[0-2][0-9]:[0-5][0-9]"
-                  placeholder={timeOptional ? "선택" : "09:00"}
-                  value={startDateTime.time}
-                />
-                <span>-</span>
-                <input
-                  aria-label="종료시간"
-                  className="time-text-input"
-                  inputMode="numeric"
-                  maxLength={5}
-                  onChange={(event) => setForm((current) => ({ ...current, end_at: combineDateTimeParts(endDateTime.date || startDateTime.date, normalizeTimeValue(event.target.value)) }))}
-                  pattern="[0-2][0-9]:[0-5][0-9]"
-                  placeholder={timeOptional ? "선택" : "10:00"}
-                  value={endDateTime.time}
-                />
+                {!isAllDay && (
+                  <>
+                    <input
+                      aria-label="시작시간"
+                      className="time-text-input"
+                      onChange={(event) => setForm((current) => ({ ...current, start_at: combineDateTimeParts(startDateTime.date, event.target.value) }))}
+                      type="time"
+                      value={startDateTime.time}
+                    />
+                    <span>-</span>
+                    <input
+                      aria-label="종료시간"
+                      className="time-text-input"
+                      onChange={(event) => setForm((current) => ({ ...current, end_at: combineDateTimeParts(endDateTime.date || startDateTime.date, event.target.value) }))}
+                      type="time"
+                      value={endDateTime.time}
+                    />
+                  </>
+                )}
                 <input
                   aria-label="종료일"
                   onChange={(event) => setForm((current) => ({ ...current, end_at: combineDateTimeParts(event.target.value, endDateTime.time || startDateTime.time) }))}
@@ -776,13 +785,19 @@ export default function SchedulesPage() {
                   />
                   종일
                 </label>
-                <span>반복 안함</span>
+                <label className="check-label">
+                  <input
+                    checked={form.repeat_type !== "NONE"}
+                    onChange={(event) => setForm((current) => ({ ...current, repeat_type: event.target.checked ? "DAILY" : "NONE" }))}
+                    type="checkbox"
+                  />
+                  반복 일정
+                </label>
               </div>
 
               <div className="schedule-editor-icon" aria-hidden="true">i</div>
               <div className="schedule-editor-tabs">
                 <button className="active" type="button">일정 세부정보</button>
-                <button type="button">시간 찾기</button>
               </div>
 
               <div className="schedule-editor-icon" aria-hidden="true">⌖</div>
@@ -819,26 +834,6 @@ export default function SchedulesPage() {
                     ))}
                   </div>
                 )}
-              </div>
-
-              <div className="schedule-editor-icon" aria-hidden="true">!</div>
-              <div className="schedule-time-row compact">
-                <input
-                  aria-label="알림일"
-                  onChange={(event) => setForm((current) => ({ ...current, remind_at: combineDateTimeParts(event.target.value, remindDateTime.time || startDateTime.time) }))}
-                  type="date"
-                  value={remindDateTime.date}
-                />
-                <input
-                  aria-label="알림시간"
-                  className="time-text-input"
-                  inputMode="numeric"
-                  maxLength={5}
-                  onChange={(event) => setForm((current) => ({ ...current, remind_at: combineDateTimeParts(remindDateTime.date || startDateTime.date, normalizeTimeValue(event.target.value)) }))}
-                  pattern="[0-2][0-9]:[0-5][0-9]"
-                  placeholder="09:00"
-                  value={remindDateTime.time}
-                />
               </div>
 
               <div className="schedule-editor-icon" aria-hidden="true">▣</div>

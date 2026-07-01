@@ -528,16 +528,122 @@ td {
 
 .attachment-list {
   display: grid;
-  gap: 4px;
+  gap: 8px;
   margin-top: 6px;
   font-size: 12px;
 }
 
-.attachment-list .text-button {
+.attachment-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.attachment-list .attachment-name-button {
   justify-content: flex-start;
+  min-width: 0;
   overflow-wrap: anywhere;
   text-align: left;
   white-space: normal;
+}
+
+.attachment-action-button,
+.attachment-download-all {
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding: 5px 10px;
+  font-size: 12px;
+}
+
+.attachment-download-all {
+  justify-self: start;
+}
+
+.attachment-preview-modal {
+  width: min(920px, 100%);
+  max-height: min(780px, calc(100vh - 48px));
+  overflow: auto;
+}
+
+.attachment-preview-media {
+  display: block;
+  max-width: 100%;
+  max-height: calc(100vh - 170px);
+  margin: 16px auto 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #0f172a;
+  object-fit: contain;
+}
+
+.attachment-preview-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.attachment-preview-controls span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.comment-list {
+  display: grid;
+  gap: 10px;
+}
+
+.comment-card {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fbff;
+  padding: 12px;
+}
+
+.comment-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.comment-card time {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.comment-card p {
+  margin: 0;
+  color: #1f2f4d;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.comment-form {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.comment-form textarea {
+  width: 100%;
+  min-height: 82px;
+  resize: vertical;
+}
+
+.comment-form .primary-button {
+  justify-self: end;
 }
 
 .form-error,
@@ -1197,6 +1303,15 @@ td {
   padding-inline: 12px;
 }
 
+.tasks-table .task-action-buttons {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: nowrap;
+  gap: 6px;
+  white-space: nowrap;
+}
+
 .tasks-table th:nth-child(5),
 .tasks-table td:nth-child(5) {
   text-align: center;
@@ -1217,9 +1332,13 @@ td {
   white-space: normal;
 }
 
-.report-table td.table-actions button,
-.tasks-table td.table-actions button {
+.report-table td.table-actions button {
   margin: 3px;
+  vertical-align: middle;
+}
+
+.tasks-table td.table-actions button {
+  margin: 0;
   vertical-align: middle;
 }
 
@@ -1412,8 +1531,8 @@ td {
   margin: 16px 0 0;
 }
 
-.report-detail-meta div,
-.report-detail-meta label {
+.report-detail-meta > div,
+.report-detail-meta > label {
   min-width: 0;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -1446,6 +1565,19 @@ td {
   background: #fff;
 }
 
+.report-detail-modal:not(.report-editor-modal) .report-detail-meta > div {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  text-align: center;
+}
+
+.report-detail-modal:not(.report-editor-modal) .report-detail-meta dt,
+.report-detail-modal:not(.report-editor-modal) .report-detail-meta dd {
+  width: 100%;
+  text-align: center;
+}
+
 .task-editor-modal .report-detail-section label,
 .report-editor-modal .report-detail-section label {
   display: grid;
@@ -1468,8 +1600,46 @@ td {
   width: 100%;
 }
 
-.report-detail-meta .recipient-status-list {
+.report-detail-modal .report-detail-meta .recipient-status-list {
   min-width: 0;
+  gap: 8px;
+}
+
+.report-detail-modal .report-detail-meta .recipient-status-list > div {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.report-detail-modal .report-detail-meta .report-person-cell {
+  justify-items: center;
+  gap: 2px;
+  margin-inline: auto;
+  max-width: 180px;
+  text-align: center;
+}
+
+.recipient-status-summary {
+  display: grid;
+  gap: 6px;
+  justify-items: center;
+  text-align: center;
+}
+
+.recipient-status-summary > div {
+  min-width: 0;
+  display: grid;
+  justify-items: center;
+}
+
+.recipient-status-time {
+  display: block;
+  color: #13233f;
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .report-detail-section {
@@ -1509,7 +1679,7 @@ td {
   gap: 8px;
 }
 
-.recipient-detail-status-list div {
+.recipient-detail-status-list > div {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 4px 12px;
@@ -1525,6 +1695,11 @@ td {
   font-size: 14px;
   line-height: 1.4;
   word-break: keep-all;
+}
+
+.recipient-detail-person .person-cell {
+  min-width: 0;
+  max-width: none;
 }
 
 .recipient-detail-status-list span {
@@ -1545,6 +1720,24 @@ td {
   color: var(--muted);
   font-size: 12px;
   font-weight: 800;
+}
+
+.existing-attachment-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.existing-attachment-list > span,
+.existing-attachment-list small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.existing-attachment-list .attachment-list {
+  margin-top: 0;
+  min-width: 0;
 }
 
 .approval-card {
@@ -2522,6 +2715,10 @@ td {
   padding: 14px;
 }
 
+.expense-summary-section > div {
+  min-width: 0;
+}
+
 .expense-summary-section h3 {
   margin-bottom: 4px;
 }
@@ -2531,6 +2728,7 @@ td {
   color: var(--muted);
   font-size: 13px;
   font-weight: 800;
+  overflow-wrap: anywhere;
 }
 
 .expense-item-table {

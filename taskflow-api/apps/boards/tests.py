@@ -10,6 +10,7 @@ class BoardApiTests(APITestCase):
         User = get_user_model()
         self.author = User.objects.create_user("author", "author@example.com", "StrongPass123!")
         self.reader = User.objects.create_user("reader", "reader@example.com", "StrongPass123!")
+        self.admin = User.objects.create_user("admin", "admin@example.com", "StrongPass123!", role=User.UserRole.ADMIN)
 
     def test_create_post_returns_id_for_follow_up_actions(self):
         self.client.force_authenticate(self.author)
@@ -45,3 +46,24 @@ class BoardApiTests(APITestCase):
         like_response = self.client.post(f"/api/boards/posts/{post.id}/like/", {}, format="json")
         self.assertEqual(like_response.status_code, status.HTTP_200_OK)
         self.assertTrue(BoardLike.objects.filter(post=post, user=self.reader).exists())
+
+    def test_admin_can_delete_but_cannot_update_other_users_post(self):
+        post = BoardPost.objects.create(
+            author=self.author,
+            board_type=BoardPost.BoardType.DATA_ROOM,
+            title="관리자 삭제 대상",
+            content="관리자는 삭제만 가능합니다.",
+        )
+
+        self.client.force_authenticate(self.admin)
+        update_response = self.client.patch(
+            f"/api/boards/posts/{post.id}/",
+            {"title": "관리자가 수정"},
+            format="json",
+        )
+        self.assertEqual(update_response.status_code, status.HTTP_403_FORBIDDEN)
+
+        delete_response = self.client.delete(f"/api/boards/posts/{post.id}/")
+        self.assertEqual(delete_response.status_code, status.HTTP_204_NO_CONTENT)
+        post.refresh_from_db()
+        self.assertTrue(post.is_deleted)

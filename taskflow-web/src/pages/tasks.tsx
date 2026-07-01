@@ -577,7 +577,7 @@ export default function TasksPage() {
             const label = [record.department, record.position].filter(Boolean).join(" / ");
             return (
               <div key={record.id}>
-                <strong>{record.name}{label ? ` (${label})` : ""}</strong>
+                <div className="recipient-detail-person">{renderPerson(label ? `${record.name} (${label})` : record.name)}</div>
                 <span>{record.is_read ? "읽음" : "안읽음"}</span>
                 {record.read_at && <small>{formatDateTime(record.read_at)}</small>}
               </div>
@@ -625,7 +625,7 @@ export default function TasksPage() {
             <td>{renderStatus(item)}</td>
             <td>{labelOf(priorityLabels, item.priority)}</td>
             <td>{formatDueDate(item.due_date)}</td>
-            <td className="table-actions">{renderActions(item)}</td>
+            <td className="table-actions"><span className="task-action-buttons">{renderActions(item)}</span></td>
           </tr>
         ))}
         {!items.length && <tr><td colSpan={8}>{emptyMessage}</td></tr>}

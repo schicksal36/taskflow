@@ -14,16 +14,36 @@ from .models import Schedule, ScheduleParticipant
 class ScheduleParticipantSerializer(serializers.ModelSerializer):
     """일정 참여자 serializer.
 
-    user id와 함께 username을 내려줘 프론트가 별도 사용자 조회 없이 참여자 목록을
-    표시할 수 있게 합니다.
+    user id와 함께 이름/소속/직함을 내려줘 프론트가 별도 사용자 조회 없이 참여자
+    목록을 표시할 수 있게 합니다.
     """
 
     username = serializers.CharField(source="user.username", read_only=True)
+    email = serializers.EmailField(source="user.email", read_only=True)
+    first_name = serializers.CharField(source="user.first_name", read_only=True)
+    display_name = serializers.SerializerMethodField()
+    department = serializers.CharField(source="user.department", read_only=True)
+    position = serializers.CharField(source="user.position", read_only=True)
 
     class Meta:
         model = ScheduleParticipant
-        fields = ["id", "schedule", "user", "username", "response", "created_at"]
+        fields = [
+            "id",
+            "schedule",
+            "user",
+            "username",
+            "email",
+            "first_name",
+            "display_name",
+            "department",
+            "position",
+            "response",
+            "created_at",
+        ]
         read_only_fields = ["schedule", "created_at"]
+
+    def get_display_name(self, obj):
+        return obj.user.first_name or obj.user.email or obj.user.username
 
 
 class ScheduleListSerializer(serializers.ModelSerializer):

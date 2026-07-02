@@ -1,19 +1,16 @@
 """[사용자] views.py - 사용자/인증 앱 뷰.
 
-역할: 회원가입/로그인, 프로필 관리, 비밀번호 변경, 생체인식, 관리자 승격 API 처리
-관련 모델: User, Profile, AdminApprovalRequest, BiometricCredential
+역할: 회원가입/로그인, 프로필 관리, 비밀번호 변경, 관리자 승격 API 처리
+관련 모델: User, Profile, AdminApprovalRequest
 관련 URL: /api/users/
 작성기준: DRF APIView/Generic 기반, JWT 인증 필요 API와 공개 API 분리
 """
-
-from datetime import timedelta
-from secrets import token_urlsafe
 
 from django.contrib.auth import get_user_model
 from django.db.models import Q
 from django.utils import timezone
 from rest_framework import generics, permissions, status
-from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -21,15 +18,10 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.common.responses import success_response
 
-from .models import BiometricChallenge, BiometricCredential, EmailVerificationCode
+from .models import EmailVerificationCode
 from .serializers import (
     AdminApprovalRejectSerializer,
     AdminApprovalRequestSerializer,
-    BiometricCredentialSerializer,
-    BiometricLoginOptionsSerializer,
-    BiometricLoginVerifySerializer,
-    BiometricRegisterOptionsSerializer,
-    BiometricRegisterVerifySerializer,
     EmailVerifyConfirmSerializer,
     EmailVerifySendSerializer,
     LoginSerializer,
@@ -414,208 +406,3 @@ class UserRestoreView(APIView):
         serializer.save()
         return success_response(message="계정이 복구되었습니다.")
 
-
-def issue_biometric_challenge(purpose, user=None, identifier=""):
-    """WebAuthn 등록/로그인에 사용할 일회성 challenge를 발급합니다."""
-    return BiometricChallenge.objects.create(
-        user=user,
-        identifier=identifier,
-        challenge=token_urlsafe(48),
-        purpose=purpose,
-        expires_at=timezone.now() + timedelta(minutes=5),
-    )
-
-
-def get_active_challenge(challenge, purpose, user=None):
-    """challenge가 목적에 맞고, 만료되지 않았고, 아직 사용되지 않았는지 확인합니다."""
-    qs = BiometricChallenge.objects.filter(challenge=challenge, purpose=purpose).order_by("-created_at")
-    if user:
-        qs = qs.filter(user=user)
-    challenge_obj = qs.first()
-    if not challenge_obj or not challenge_obj.can_use():
-        raise ValidationError("challenge가 올바르지 않거나 만료되었습니다.")
-    return challenge_obj
-
-
-def resolve_identifier(identifier):
-    """이메일을 활성 사용자로 변환합니다."""
-    user = User.objects.filter(Q(username=identifier) | Q(email=identifier), is_active=True).first()
-    if not user:
-        raise NotFound("해당 사용자를 찾을 수 없습니다.")
-    return user
-
-
-class BiometricRegisterOptionsView(APIView):
-    """생체인식 등록 1단계: 브라우저에 넘길 PublicKeyCredentialCreationOptions 생성."""
-
-    permission_classes = [permissions.IsAuthenticated]
-
-    def post(self, request):
-        serializer = BiometricRegisterOptionsSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        challenge = issue_biometric_challenge(BiometricChallenge.Purpose.REGISTER, user=request.user)
-        # 프론트는 이 응답을 navigator.credentials.create() 입력으로 변환합니다.
-        return success_response(
-            {
-                "challenge": challenge.challenge,
-                "rp": {"name": "TaskFlow", "id": request.get_host().split(":")[0]},
-                "user": {
-                    "id": str(request.user.id),
-                    "name": request.user.username,
-                    "displayName": request.user.get_full_name() or request.user.username,
-                },
-                "pubKeyCredParams": [
-                    {"type": "public-key", "alg": -7},
-                    {"type": "public-key", "alg": -257},
-                ],
-                "timeout": 60000,
-                "attestation": "none",
-                "authenticatorSelection": {
-                    "authenticatorAttachment": "platform",
-                    "userVerification": "preferred",
-                },
-                "device_name": serializer.validated_data.get("device_name", ""),
-            },
-            "생체인식 등록 옵션이 발급되었습니다.",
-            status.HTTP_201_CREATED,
-        )
-
-
-class BiometricRegisterVerifyView(APIView):
-    """생체인식 등록 2단계: 브라우저가 만든 credential을 저장합니다.
-
-    현재 구현은 challenge 재사용 방지와 credential 저장을 담당합니다. 운영 수준의
-    WebAuthn 보안을 강화하려면 이 지점에서 webauthn 라이브러리로 attestation과
-    clientDataJSON/origin 검증을 추가하면 됩니다.
-    """
-
-    permission_classes = [permissions.IsAuthenticated]
-
-    def post(self, request):
-        serializer = BiometricRegisterVerifySerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        challenge = get_active_challenge(
-            serializer.validated_data["challenge"],
-            BiometricChallenge.Purpose.REGISTER,
-            request.user,
-        )
-        credential, _ = BiometricCredential.objects.update_or_create(
-            credential_id=serializer.validated_data["credential_id"],
-            defaults={
-                "user": request.user,
-                "public_key": serializer.validated_data.get("public_key") or serializer.validated_data["credential_id"],
-                "sign_count": serializer.validated_data.get("sign_count", 0),
-                "device_name": serializer.validated_data.get("device_name", ""),
-                "transports": serializer.validated_data.get("transports", []),
-                "is_active": True,
-            },
-        )
-        challenge.is_used = True
-        # challenge는 한 번 사용하면 재사용하지 못하게 막아 replay 위험을 줄입니다.
-        challenge.save(update_fields=["is_used"])
-        return success_response(
-            BiometricCredentialSerializer(credential).data,
-            "생체인식 기기가 등록되었습니다.",
-            status.HTTP_201_CREATED,
-        )
-
-
-class BiometricLoginOptionsView(APIView):
-    """생체인식 로그인 1단계: 등록된 credential 목록과 challenge를 내려줍니다."""
-
-    permission_classes = [permissions.AllowAny]
-
-    def post(self, request):
-        serializer = BiometricLoginOptionsSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        user = resolve_identifier(serializer.validated_data["identifier"])
-        credentials = BiometricCredential.objects.filter(user=user, is_active=True)
-        if not credentials.exists():
-            raise NotFound("등록된 생체인식 기기가 없습니다.")
-        challenge = issue_biometric_challenge(
-            BiometricChallenge.Purpose.LOGIN,
-            user=user,
-            identifier=serializer.validated_data["identifier"],
-        )
-        return success_response(
-            {
-                "challenge": challenge.challenge,
-                "timeout": 60000,
-                "userVerification": "preferred",
-                "allowCredentials": [
-                    {
-                        "type": "public-key",
-                        "id": credential.credential_id,
-                        "transports": credential.transports,
-                    }
-                    for credential in credentials
-                ],
-            },
-            "생체인식 로그인 옵션이 발급되었습니다.",
-            status.HTTP_201_CREATED,
-        )
-
-
-class BiometricLoginVerifyView(APIView):
-    """생체인식 로그인 2단계: credential과 challenge 확인 후 JWT를 발급합니다."""
-
-    permission_classes = [permissions.AllowAny]
-
-    def post(self, request):
-        serializer = BiometricLoginVerifySerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        credential = generics.get_object_or_404(
-            BiometricCredential.objects.select_related("user"),
-            credential_id=serializer.validated_data["credential_id"],
-            is_active=True,
-            user__is_active=True,
-        )
-        challenge = get_active_challenge(
-            serializer.validated_data["challenge"],
-            BiometricChallenge.Purpose.LOGIN,
-            credential.user,
-        )
-        if serializer.validated_data.get("sign_count") is not None:
-            # sign_count는 authenticator 사용 횟수 추적 값입니다.
-            credential.sign_count = serializer.validated_data["sign_count"]
-        credential.last_used_at = timezone.now()
-        credential.save(update_fields=["sign_count", "last_used_at"])
-        challenge.is_used = True
-        challenge.save(update_fields=["is_used"])
-
-        refresh = RefreshToken.for_user(credential.user)
-        return success_response(
-            {
-                "user": UserSerializer(credential.user).data,
-                "access": str(refresh.access_token),
-                "refresh": str(refresh),
-            },
-            "생체인식 로그인되었습니다.",
-        )
-
-
-class BiometricCredentialListView(generics.ListAPIView):
-    """내가 등록한 활성 생체인식 기기 목록 API."""
-
-    permission_classes = [permissions.IsAuthenticated]
-    serializer_class = BiometricCredentialSerializer
-
-    def get_queryset(self):
-        return BiometricCredential.objects.filter(user=self.request.user, is_active=True)
-
-
-class BiometricCredentialDeleteView(generics.DestroyAPIView):
-    """생체인식 기기 삭제 API.
-
-    실제 row 삭제 대신 is_active=False로 내려 로그인 후보에서 제외합니다.
-    """
-
-    permission_classes = [permissions.IsAuthenticated]
-    serializer_class = BiometricCredentialSerializer
-
-    def get_queryset(self):
-        return BiometricCredential.objects.filter(user=self.request.user, is_active=True)
-
-    def perform_destroy(self, instance):
-        instance.is_active = False
-        instance.save(update_fields=["is_active"])

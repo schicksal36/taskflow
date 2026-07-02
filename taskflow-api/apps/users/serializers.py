@@ -1,7 +1,7 @@
 """[사용자] serializers.py - 사용자/인증 API 요청 검증과 응답 변환.
 
 역할: 이메일 회원가입/로그인, 프로필 수정, 관리자 승격 신청 요청/응답 검증
-관련 모델: User, Profile, AdminApprovalRequest, EmailVerificationCode, BiometricCredential
+관련 모델: User, Profile, AdminApprovalRequest, EmailVerificationCode
 관련 URL: /api/users/
 작성기준: DRF Serializer 기반, JWT 인증 View에서 사용
 """
@@ -11,7 +11,7 @@ from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import AdminApprovalRequest, BiometricCredential, EmailVerificationCode, Profile
+from .models import AdminApprovalRequest, EmailVerificationCode, Profile
 
 User = get_user_model()
 
@@ -29,6 +29,7 @@ class UserSerializer(serializers.ModelSerializer):
             "department",
             "position",
             "profile_image",
+            "hire_date",
             "role",
             "is_email_verified",
             "is_active",
@@ -42,7 +43,7 @@ class UserUpdateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ["email", "first_name", "department", "position", "profile_image"]
+        fields = ["email", "first_name", "department", "position", "profile_image", "hire_date"]
 
     def validate_email(self, value):
         """이메일은 로그인 식별자로도 쓰이므로 다른 사용자와 중복될 수 없습니다."""
@@ -344,43 +345,3 @@ class UserRestoreSerializer(serializers.Serializer):
         code = self.validated_data["code_obj"]
         code.is_used = True
         code.save(update_fields=["is_used"])
-
-
-class BiometricCredentialSerializer(serializers.ModelSerializer):
-    """생체인식 설정 화면에 노출할 등록 기기 정보 serializer."""
-
-    class Meta:
-        model = BiometricCredential
-        fields = ["id", "credential_id", "device_name", "transports", "sign_count", "last_used_at", "created_at"]
-        read_only_fields = ["id", "credential_id", "transports", "sign_count", "last_used_at", "created_at"]
-
-
-class BiometricRegisterOptionsSerializer(serializers.Serializer):
-    """생체인식 등록 challenge 요청 serializer."""
-
-    device_name = serializers.CharField(required=False, allow_blank=True, max_length=120)
-
-
-class BiometricRegisterVerifySerializer(serializers.Serializer):
-    """브라우저가 생성한 WebAuthn credential을 서버에 저장하기 위한 serializer."""
-
-    challenge = serializers.CharField()
-    credential_id = serializers.CharField()
-    public_key = serializers.CharField(required=False, allow_blank=True)
-    sign_count = serializers.IntegerField(required=False, min_value=0, default=0)
-    device_name = serializers.CharField(required=False, allow_blank=True, max_length=120)
-    transports = serializers.ListField(child=serializers.CharField(), required=False)
-
-
-class BiometricLoginOptionsSerializer(serializers.Serializer):
-    """생체인식 로그인 challenge 요청 serializer."""
-
-    identifier = serializers.CharField()
-
-
-class BiometricLoginVerifySerializer(serializers.Serializer):
-    """생체인식 로그인 응답 검증 serializer."""
-
-    challenge = serializers.CharField()
-    credential_id = serializers.CharField()
-    sign_count = serializers.IntegerField(required=False, min_value=0)

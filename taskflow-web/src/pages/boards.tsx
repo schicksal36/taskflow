@@ -5,22 +5,27 @@ import { AttachmentList } from "@/components/AttachmentList";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   type BoardComment,
+  type BoardCommentFile,
   type BoardFile,
   type BoardPost,
   type BoardPostInput,
   type UserListItem,
+  attachBoardCommentFile,
   attachBoardFile,
   createBoardComment,
   createBoardPost,
+  deleteBoardComment,
   deleteBoardPost,
   describeApiError,
   downloadAllBoardFiles,
+  downloadBoardCommentFile,
   downloadBoardFile,
   fetchBoardPost,
   fetchBoardComments,
   fetchBoardPosts,
   fetchUsers,
   toArray,
+  updateBoardComment,
   updateBoardPost,
   uploadMediaFile,
 } from "@/lib/api";
@@ -46,6 +51,8 @@ type BoardsPageContentProps = {
   emptyMessage?: string;
   allowedTypes?: string[];
   fixedBoardType?: string;
+  enableComments?: boolean;
+  entityLabel?: string;
 };
 
 export function BoardsPageContent({
@@ -55,11 +62,14 @@ export function BoardsPageContent({
   emptyMessage = "등록된 공지사항이 없습니다.",
   allowedTypes = boardOptions,
   fixedBoardType,
+  enableComments = false,
+  entityLabel,
 }: BoardsPageContentProps) {
   const { accessToken, user } = useAuth();
   const isAdmin = user?.role === "ADMIN" || user?.role === "CEO" || user?.role === "SUPERUSER";
+  const defaultForm = { ...emptyForm, board_type: fixedBoardType ?? emptyForm.board_type, is_notice: fixedBoardType === "NOTICE" || (!fixedBoardType && emptyForm.is_notice) };
   const [items, setItems] = useState<BoardPost[]>([]);
-  const [form, setForm] = useState<BoardPostInput>({ ...emptyForm, board_type: fixedBoardType ?? emptyForm.board_type });
+  const [form, setForm] = useState<BoardPostInput>(defaultForm);
   const [users, setUsers] = useState<UserListItem[]>([]);
   const [specificUserIds, setSpecificUserIds] = useState<number[]>([]);
   const [userSearch, setUserSearch] = useState("");
@@ -68,6 +78,9 @@ export function BoardsPageContent({
   const [detailTarget, setDetailTarget] = useState<BoardPost | null>(null);
   const [detailComments, setDetailComments] = useState<BoardComment[]>([]);
   const [commentInput, setCommentInput] = useState("");
+  const [commentFiles, setCommentFiles] = useState<File[]>([]);
+  const [commentPreviewUrls, setCommentPreviewUrls] = useState<string[]>([]);
+  const [editingCommentId, setEditingCommentId] = useState<number | null>(null);
   const [selectedDeleteIds, setSelectedDeleteIds] = useState<number[]>([]);
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [message, setMessage] = useState("");
@@ -77,6 +90,7 @@ export function BoardsPageContent({
   const [searchInput, setSearchInput] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const [boardTypeFilter, setBoardTypeFilter] = useState("");
+  const resolvedEntityLabel = entityLabel ?? (fixedBoardType === "DATA_ROOM" ? "자료" : fixedBoardType === "FREE" ? "게시글" : "공지사항");
 
   async function loadItems() {
     if (!accessToken) {
@@ -120,11 +134,20 @@ export function BoardsPageContent({
     loadUsers();
   }, [accessToken]);
 
+  useEffect(() => () => {
+    commentPreviewUrls.forEach((url) => URL.revokeObjectURL(url));
+  }, [commentPreviewUrls]);
+
   function resetForm() {
     setEditingId(null);
-    setForm({ ...emptyForm, board_type: fixedBoardType ?? emptyForm.board_type });
+    setForm(defaultForm);
     setSpecificUserIds([]);
     setFiles([]);
+    setCommentFiles([]);
+    setCommentPreviewUrls((current) => {
+      current.forEach((url) => URL.revokeObjectURL(url));
+      return [];
+    });
     setUserSearch("");
     setIsEditorOpen(false);
   }
@@ -135,7 +158,7 @@ export function BoardsPageContent({
       return;
     }
     setEditingId(null);
-    setForm({ ...emptyForm, board_type: fixedBoardType ?? emptyForm.board_type });
+    setForm(defaultForm);
     setSpecificUserIds([]);
     setFiles([]);
     setUserSearch("");
@@ -237,11 +260,13 @@ export function BoardsPageContent({
     try {
       const [post, comments] = await Promise.all([
         fetchBoardPost(accessToken, item.id),
-        fetchBoardComments(accessToken, item.id),
+        enableComments ? fetchBoardComments(accessToken, item.id) : Promise.resolve([]),
       ]);
       setDetailTarget(post);
       setDetailComments(toArray(comments));
       setCommentInput("");
+      setCommentFiles([]);
+      setEditingCommentId(null);
       await loadItems();
     } catch (error) {
       setMessage(describeApiError(error));
@@ -254,7 +279,7 @@ export function BoardsPageContent({
     }
     const [post, comments] = await Promise.all([
       fetchBoardPost(accessToken, postId),
-      fetchBoardComments(accessToken, postId),
+      enableComments ? fetchBoardComments(accessToken, postId) : Promise.resolve([]),
     ]);
     setDetailTarget(post);
     setDetailComments(toArray(comments));
@@ -269,8 +294,20 @@ export function BoardsPageContent({
     setIsCommentSaving(true);
     setMessage("");
     try {
-      await createBoardComment(accessToken, detailTarget.id, commentInput.trim());
+      const comment = editingCommentId
+        ? await updateBoardComment(accessToken, editingCommentId, commentInput.trim())
+        : await createBoardComment(accessToken, detailTarget.id, commentInput.trim());
+      for (const file of commentFiles) {
+        const media = await uploadMediaFile(accessToken, file, { target_app: "BOARD_COMMENTS", target_id: comment.id });
+        await attachBoardCommentFile(accessToken, comment.id, media.id);
+      }
       setCommentInput("");
+      setCommentFiles([]);
+      setCommentPreviewUrls((current) => {
+        current.forEach((url) => URL.revokeObjectURL(url));
+        return [];
+      });
+      setEditingCommentId(null);
       await refreshDetail(detailTarget.id);
       await loadItems();
     } catch (error) {
@@ -286,6 +323,48 @@ export function BoardsPageContent({
     }
     try {
       await downloadBoardFile(accessToken, file.id, file.original_name);
+    } catch (error) {
+      setMessage(describeApiError(error));
+    }
+  }
+
+  async function handleDownloadCommentFile(file: BoardCommentFile) {
+    if (!accessToken) {
+      return;
+    }
+    try {
+      await downloadBoardCommentFile(accessToken, file.id, file.original_name);
+    } catch (error) {
+      setMessage(describeApiError(error));
+    }
+  }
+
+  function handleCommentFiles(files: File[]) {
+    setCommentPreviewUrls((current) => {
+      current.forEach((url) => URL.revokeObjectURL(url));
+      return files.map((file) => URL.createObjectURL(file));
+    });
+    setCommentFiles(files);
+  }
+
+  function startEditComment(comment: BoardComment) {
+    setEditingCommentId(comment.id);
+    setCommentInput(comment.content);
+    setCommentFiles([]);
+    setCommentPreviewUrls((current) => {
+      current.forEach((url) => URL.revokeObjectURL(url));
+      return [];
+    });
+  }
+
+  async function handleDeleteComment(commentId: number) {
+    if (!accessToken || !detailTarget) {
+      return;
+    }
+    try {
+      await deleteBoardComment(accessToken, commentId);
+      await refreshDetail(detailTarget.id);
+      await loadItems();
     } catch (error) {
       setMessage(describeApiError(error));
     }
@@ -315,7 +394,7 @@ export function BoardsPageContent({
   });
   const canFilterBoardType = !fixedBoardType && allowedTypes.length > 1;
   const canDeletePost = (item: BoardPost) => isAdmin || item.author === user?.id;
-  const canEditPost = (item: BoardPost) => !isAdmin && item.author === user?.id;
+  const canEditPost = (item: BoardPost) => isAdmin || item.author === user?.id;
   const deletableItems = items.filter(canDeletePost);
   const allDeletableSelected = deletableItems.length > 0 && deletableItems.every((item) => selectedDeleteIds.includes(item.id));
 
@@ -411,7 +490,7 @@ export function BoardsPageContent({
                 </button>
               )}
               <button className={isEditorOpen ? "ghost-button" : "primary-button"} onClick={openCreateForm} type="button">
-                {isEditorOpen ? `${fixedBoardType ? "자료" : "공지사항"} 등록 닫기` : `${fixedBoardType ? "자료" : "공지사항"} 등록`}
+                {isEditorOpen ? `${resolvedEntityLabel} 등록 닫기` : `${resolvedEntityLabel} 등록`}
               </button>
             </div>
           </form>
@@ -487,7 +566,7 @@ export function BoardsPageContent({
         <div className="modal-backdrop">
           <div className="modal-panel report-detail-modal">
             <div className="panel-head">
-              <h2>{fixedBoardType ? "자료 내용" : "게시글 내용"}</h2>
+              <h2>{resolvedEntityLabel} 내용</h2>
               <button className="ghost-button" onClick={() => setDetailTarget(null)} type="button">
                 닫기
               </button>
@@ -523,31 +602,55 @@ export function BoardsPageContent({
               {renderDetailFiles(detailTarget)}
             </section>
 
-            <section className="report-detail-section">
-              <h3>댓글</h3>
-              <div className="comment-list">
-                {detailComments.map((comment) => (
-                  <article className="comment-card" key={comment.id}>
-                    <div className="comment-card-head">
-                      {renderCommentAuthor(comment)}
-                      <time>{formatDateTime(comment.created_at)}</time>
+            {enableComments && (
+              <section className="report-detail-section">
+                <h3>댓글</h3>
+                <div className="comment-list">
+                  {detailComments.map((comment) => (
+                    <article className="comment-card" key={comment.id}>
+                      <div className="comment-card-head">
+                        {renderCommentAuthor(comment)}
+                        <time>{formatDateTime(comment.created_at)}</time>
+                      </div>
+                      <p>{comment.content}</p>
+                      {!!comment.files?.length && (
+                        <AttachmentList files={comment.files} onDownload={handleDownloadCommentFile} />
+                      )}
+                      {comment.author === user?.id && (
+                        <div className="table-actions">
+                          <button className="ghost-button" onClick={() => startEditComment(comment)} type="button">
+                            수정
+                          </button>
+                          <button className="danger-button" onClick={() => handleDeleteComment(comment.id)} type="button">
+                            삭제
+                          </button>
+                        </div>
+                      )}
+                    </article>
+                  ))}
+                  {!detailComments.length && <p className="report-detail-empty">댓글이 없습니다.</p>}
+                </div>
+                <form className="comment-form" onSubmit={handleSubmitComment}>
+                  <textarea
+                    onChange={(event) => setCommentInput(event.target.value)}
+                    placeholder="댓글 작성"
+                    value={commentInput}
+                  />
+                  <input accept="image/jpeg,image/png,image/webp,image/gif" multiple onChange={(event) => handleCommentFiles(Array.from(event.target.files ?? []))} type="file" />
+                  {!!commentPreviewUrls.length && (
+                    <div className="comment-image-preview-list">
+                      {commentPreviewUrls.map((url, index) => (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img alt={`댓글 이미지 ${index + 1}`} key={url} src={url} />
+                      ))}
                     </div>
-                    <p>{comment.content}</p>
-                  </article>
-                ))}
-                {!detailComments.length && <p className="report-detail-empty">댓글이 없습니다.</p>}
-              </div>
-              <form className="comment-form" onSubmit={handleSubmitComment}>
-                <textarea
-                  onChange={(event) => setCommentInput(event.target.value)}
-                  placeholder="댓글 작성"
-                  value={commentInput}
-                />
-                <button className="primary-button" disabled={isCommentSaving || !commentInput.trim()} type="submit">
-                  {isCommentSaving ? "등록 중" : "댓글 등록"}
-                </button>
-              </form>
-            </section>
+                  )}
+                  <button className="primary-button" disabled={isCommentSaving || !commentInput.trim()} type="submit">
+                    {isCommentSaving ? "등록 중" : editingCommentId ? "댓글 수정" : "댓글 등록"}
+                  </button>
+                </form>
+              </section>
+            )}
           </div>
         </div>
       )}
@@ -556,14 +659,14 @@ export function BoardsPageContent({
         <div className="modal-backdrop">
           <form className="modal-panel report-detail-modal form-stack report-editor-modal" onSubmit={handleSubmit}>
             <div className="panel-head">
-              <h2>{editingId ? `${fixedBoardType ? "자료" : "공지사항"} 수정` : `새 ${fixedBoardType ? "자료" : "공지사항"}`}</h2>
+              <h2>{editingId ? `${resolvedEntityLabel} 수정` : `새 ${resolvedEntityLabel}`}</h2>
               <button className="ghost-button" onClick={openCreateForm} type="button">
-                {fixedBoardType ? "자료 등록 닫기" : "공지사항 등록 닫기"}
+                {resolvedEntityLabel} 등록 닫기
               </button>
             </div>
 
             <div className="report-detail-head">
-              <strong>{form.title || (fixedBoardType ? "새 자료" : "새 공지사항")}</strong>
+              <strong>{form.title || `새 ${resolvedEntityLabel}`}</strong>
               <span>{labelOf(boardTypeLabels, form.board_type)}</span>
             </div>
 
@@ -633,10 +736,12 @@ export function BoardsPageContent({
             </section>
 
             <div className="form-row">
-              <label className="check-label">
-                <input checked={Boolean(form.is_notice)} onChange={(event) => setForm((current) => ({ ...current, is_notice: event.target.checked }))} type="checkbox" />
-                공지글
-              </label>
+              {form.board_type === "NOTICE" && (
+                <label className="check-label">
+                  <input checked={Boolean(form.is_notice)} onChange={(event) => setForm((current) => ({ ...current, is_notice: event.target.checked }))} type="checkbox" />
+                  공지글
+                </label>
+              )}
               <label className="check-label">
                 <input checked={Boolean(form.is_pinned)} onChange={(event) => setForm((current) => ({ ...current, is_pinned: event.target.checked }))} type="checkbox" />
                 상단 고정

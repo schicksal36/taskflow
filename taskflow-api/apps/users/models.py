@@ -35,6 +35,7 @@ class User(AbstractUser):
     department = models.CharField(max_length=80, blank=True)  # 부서
     position = models.CharField(max_length=50, blank=True)  # 직함
     profile_image = models.ImageField(upload_to="profiles/%Y/%m/%d/", blank=True, null=True)  # 프로필 이미지
+    hire_date = models.DateField(null=True, blank=True)  # 입사일
     role = models.CharField(max_length=20, choices=UserRole.choices, default=UserRole.USER)  # 앱 권한 역할
     is_email_verified = models.BooleanField(default=False)  # 이메일 인증 완료 여부
     deleted_at = models.DateTimeField(null=True, blank=True)  # 회원탈퇴 시각

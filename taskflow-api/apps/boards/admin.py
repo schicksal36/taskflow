@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import BoardComment, BoardFile, BoardLike, BoardPost
+from .models import BoardComment, BoardCommentFile, BoardFile, BoardLike, BoardPost
 
 
 class BoardCommentInline(admin.TabularInline):
@@ -17,5 +17,6 @@ class BoardPostAdmin(admin.ModelAdmin):
 
 
 admin.site.register(BoardComment)
+admin.site.register(BoardCommentFile)
 admin.site.register(BoardLike)
 admin.site.register(BoardFile)

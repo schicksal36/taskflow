@@ -29,10 +29,4 @@ urlpatterns = [
     path("password/change/", views.PasswordChangeView.as_view(), name="password-change"),
     path("restore/request/", views.UserRestoreRequestView.as_view(), name="user-restore-request"),
     path("restore/", views.UserRestoreView.as_view(), name="user-restore"),
-    path("biometric/register/options/", views.BiometricRegisterOptionsView.as_view(), name="biometric-register-options"),
-    path("biometric/register/verify/", views.BiometricRegisterVerifyView.as_view(), name="biometric-register-verify"),
-    path("biometric/login/options/", views.BiometricLoginOptionsView.as_view(), name="biometric-login-options"),
-    path("biometric/login/verify/", views.BiometricLoginVerifyView.as_view(), name="biometric-login-verify"),
-    path("biometric/credentials/", views.BiometricCredentialListView.as_view(), name="biometric-credential-list"),
-    path("biometric/credentials/<int:pk>/", views.BiometricCredentialDeleteView.as_view(), name="biometric-credential-delete"),
 ]

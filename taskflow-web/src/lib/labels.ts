@@ -55,6 +55,7 @@ export const reportStatusLabels: Record<string, string> = {
 
 export const boardTypeLabels: Record<string, string> = {
   NOTICE: "공지사항",
+  FREE: "자유게시판",
   DATA_ROOM: "자료실",
 };
 

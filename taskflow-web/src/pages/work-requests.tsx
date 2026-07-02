@@ -231,13 +231,16 @@ export default function WorkRequestsPage() {
   }
 
   function selectAssignee(nextUser: UserListItem) {
-    setSelectedAssignees((current) => (current.some((entry) => entry.id === nextUser.id) ? current : [...current, nextUser]));
+    const isSelected = selectedAssignees.some((entry) => entry.id === nextUser.id);
+    if (isSelected) {
+      removeSelectedAssignee(nextUser.id);
+      return;
+    }
+    setSelectedAssignees((current) => [...current, nextUser]);
     setForm((current) => {
       const ids = Array.from(new Set([...(current.assignee_ids ?? []), nextUser.id]));
       return { ...current, assignee: ids[0] ?? null, assignee_ids: ids, assignee_input: "" };
     });
-    setAssigneeSearch("");
-    setAssigneeResults([]);
   }
 
   function addManualAssignee() {
@@ -573,6 +576,23 @@ export default function WorkRequestsPage() {
           <div className="form-grid two">
             <label className="assignee-search">
               <span>담당자</span>
+              <div className="recipient-picker selected-assignee-chips">
+                {manualAssignees.map((assignee) => (
+                  <button className="recipient-option manual" key={assignee} onClick={() => removeManualAssignee(assignee)} type="button">
+                    직접: {assignee} ×
+                  </button>
+                ))}
+                {selectedAssignees.map((assignee) => (
+                  <button
+                    className="recipient-option"
+                    key={assignee.id}
+                    onClick={() => removeSelectedAssignee(assignee.id)}
+                    type="button"
+                  >
+                    {userLabel(assignee)} ×
+                  </button>
+                ))}
+              </div>
               <div className="inline-entry">
                 <input
                   onChange={(event) => handleAssigneeSearch(event.target.value)}
@@ -587,7 +607,8 @@ export default function WorkRequestsPage() {
               {!!assigneeResults.length && (
                 <div className="assignee-dropdown">
                   {assigneeResults.map((entry) => (
-                    <button key={entry.id} onClick={() => selectAssignee(entry)} type="button">
+                    <button className="assignee-result-option" key={entry.id} onClick={() => selectAssignee(entry)} type="button">
+                      <input checked={selectedAssignees.some((assignee) => assignee.id === entry.id)} readOnly type="checkbox" />
                       {userLabel(entry)}
                     </button>
                   ))}
@@ -602,24 +623,6 @@ export default function WorkRequestsPage() {
                 value={form.deadline_at ?? ""}
               />
             </label>
-          </div>
-
-          <div className="recipient-picker">
-            {manualAssignees.map((assignee) => (
-              <button className="recipient-option manual" key={assignee} onClick={() => removeManualAssignee(assignee)} type="button">
-                직접: {assignee}
-              </button>
-            ))}
-            {selectedAssignees.map((assignee) => (
-              <button
-                className="recipient-option"
-                key={assignee.id}
-                onClick={() => removeSelectedAssignee(assignee.id)}
-                type="button"
-              >
-                {userLabel(assignee)}
-              </button>
-            ))}
           </div>
 
           <label>

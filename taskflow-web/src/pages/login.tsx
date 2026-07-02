@@ -5,27 +5,21 @@ import { FormEvent, useEffect, useState } from "react";
 import { AuthLayout } from "@/components/AuthLayout";
 import { useAuth } from "@/contexts/AuthContext";
 import { describeApiError } from "@/lib/api";
-import { isWebAuthnSupported } from "@/lib/webauthn";
 
 export default function LoginPage() {
   const router = useRouter();
-  const { accessToken, isReady, login, loginWithBiometric } = useAuth();
+  const { accessToken, isReady, login } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [remember, setRemember] = useState(true);
   const [message, setMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [supportsBiometric, setSupportsBiometric] = useState(false);
 
   useEffect(() => {
     if (isReady && accessToken) {
       router.replace("/dashboard");
     }
   }, [accessToken, isReady, router]);
-
-  useEffect(() => {
-    setSupportsBiometric(isWebAuthnSupported());
-  }, []);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -34,25 +28,6 @@ export default function LoginPage() {
 
     try {
       await login(email, password, remember);
-      router.replace("/dashboard");
-    } catch (error) {
-      setMessage(describeApiError(error));
-    } finally {
-      setIsSubmitting(false);
-    }
-  }
-
-  async function handleBiometricLogin() {
-    if (!email) {
-      setMessage("생체인식 로그인에 사용할 이메일을 입력하세요.");
-      return;
-    }
-
-    setMessage("");
-    setIsSubmitting(true);
-
-    try {
-      await loginWithBiometric(email, remember);
       router.replace("/dashboard");
     } catch (error) {
       setMessage(describeApiError(error));
@@ -105,12 +80,6 @@ export default function LoginPage() {
         <button className="primary-button" disabled={isSubmitting} type="submit">
           {isSubmitting ? "로그인 중" : "로그인"}
         </button>
-
-        {supportsBiometric && (
-          <button className="secondary-button" disabled={isSubmitting} onClick={handleBiometricLogin} type="button">
-            생체인식 로그인
-          </button>
-        )}
 
         <div className="divider">
           <span>또는</span>

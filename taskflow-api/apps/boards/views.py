@@ -17,8 +17,9 @@ from apps.common.responses import success_response
 from apps.notifications.models import Notification
 from apps.notifications.services import create_notification
 
-from .models import BoardComment, BoardFile, BoardLike, BoardPost
+from .models import BoardComment, BoardCommentFile, BoardFile, BoardLike, BoardPost
 from .serializers import (
+    BoardCommentFileSerializer,
     BoardCommentSerializer,
     BoardFileSerializer,
     BoardPostCreateUpdateSerializer,
@@ -55,9 +56,10 @@ class BoardPostQuerysetMixin:
         return generics.get_object_or_404(self.visible_posts(), pk=pk)
 
     def ensure_author(self, post):
-        """게시글 작성자만 수정/고정/첨부 관리가 가능한지 확인합니다."""
-        if post.author != self.request.user:
-            raise PermissionDenied("작성자만 처리할 수 있습니다.")
+        """게시글 작성자와 관리자가 수정/고정/첨부 관리가 가능한지 확인합니다."""
+        role = getattr(self.request.user, "role", "")
+        if post.author != self.request.user and role not in {"ADMIN", "CEO", "SUPERUSER"}:
+            raise PermissionDenied("작성자 또는 관리자만 처리할 수 있습니다.")
 
     def ensure_deletable(self, post):
         """작성자와 관리자는 게시글을 삭제할 수 있습니다."""
@@ -168,16 +170,20 @@ class BoardPostLikeView(BoardPostQuerysetMixin, APIView):
 
 
 class BoardCommentListCreateView(BoardPostQuerysetMixin, generics.ListCreateAPIView):
-    """게시글 댓글 목록/작성 API."""
+    """자유게시판 댓글 목록/작성 API."""
 
     serializer_class = BoardCommentSerializer
 
     def get_queryset(self):
         post = self.get_post(self.kwargs["pk"])
+        if post.board_type != BoardPost.BoardType.FREE:
+            raise ValidationError("댓글은 자유게시판에서만 사용할 수 있습니다.")
         return BoardComment.objects.filter(post=post, is_deleted=False)
 
     def perform_create(self, serializer):
         post = self.get_post(self.kwargs["pk"])
+        if post.board_type != BoardPost.BoardType.FREE:
+            raise ValidationError("댓글은 자유게시판에서만 사용할 수 있습니다.")
         comment = serializer.save(post=post, author=self.request.user)
         # 댓글 수는 목록 성능을 위해 게시글에 별도 저장합니다.
         post.comment_count = post.comments.filter(is_deleted=False).count()
@@ -187,14 +193,14 @@ class BoardCommentListCreateView(BoardPostQuerysetMixin, generics.ListCreateAPIV
 
 
 class BoardCommentDetailView(generics.RetrieveUpdateDestroyAPIView):
-    """게시글 댓글 단건 조회/수정/소프트 삭제 API."""
+    """자유게시판 댓글 단건 조회/수정/소프트 삭제 API."""
 
     serializer_class = BoardCommentSerializer
     permission_classes = [permissions.IsAuthenticated]
     lookup_url_kwarg = "comment_id"
 
     def get_queryset(self):
-        return BoardComment.objects.filter(is_deleted=False)
+        return BoardComment.objects.filter(post__board_type=BoardPost.BoardType.FREE, is_deleted=False)
 
     def perform_update(self, serializer):
         if self.get_object().author != self.request.user:
@@ -210,6 +216,58 @@ class BoardCommentDetailView(generics.RetrieveUpdateDestroyAPIView):
         # 삭제 후에도 실제 row는 남으므로 is_deleted=False 기준으로 다시 계산합니다.
         post.comment_count = post.comments.filter(is_deleted=False).count()
         post.save(update_fields=["comment_count"])
+
+
+class BoardCommentFileListCreateView(generics.ListCreateAPIView):
+    """자유게시판 댓글 사진 목록/연결 API."""
+
+    serializer_class = BoardCommentFileSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_comment(self):
+        return generics.get_object_or_404(
+            BoardComment.objects.filter(post__board_type=BoardPost.BoardType.FREE, is_deleted=False),
+            pk=self.kwargs["comment_id"],
+        )
+
+    def get_queryset(self):
+        return BoardCommentFile.objects.filter(comment=self.get_comment())
+
+    def perform_create(self, serializer):
+        comment = self.get_comment()
+        if comment.author != self.request.user:
+            raise PermissionDenied("작성자만 댓글 사진을 추가할 수 있습니다.")
+        serializer.save(comment=comment, uploaded_by=self.request.user)
+
+
+class BoardCommentFileDetailView(generics.RetrieveDestroyAPIView):
+    """자유게시판 댓글 사진 조회/삭제 API."""
+
+    serializer_class = BoardCommentFileSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    lookup_url_kwarg = "file_id"
+
+    def get_queryset(self):
+        return BoardCommentFile.objects.filter(comment__post__board_type=BoardPost.BoardType.FREE, comment__is_deleted=False)
+
+    def perform_destroy(self, instance):
+        if instance.uploaded_by != self.request.user and instance.comment.author != self.request.user:
+            raise PermissionDenied("업로드한 사용자 또는 댓글 작성자만 삭제할 수 있습니다.")
+        instance.delete()
+
+
+class BoardCommentFileDownloadView(APIView):
+    """자유게시판 댓글 사진 다운로드 API."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, file_id):
+        comment_file = generics.get_object_or_404(
+            BoardCommentFile.objects.filter(comment__post__board_type=BoardPost.BoardType.FREE, comment__is_deleted=False),
+            pk=file_id,
+        )
+        media = comment_file.media_file
+        return FileResponse(media.file.open("rb"), as_attachment=True, filename=media.original_name)
 
 
 class BoardFileListCreateView(BoardPostQuerysetMixin, generics.ListCreateAPIView):
@@ -305,3 +363,20 @@ class BoardPermissionView(BoardPostQuerysetMixin, APIView):
         if isinstance(user_ids, list):
             post.specific_users.set(user_ids)
         return success_response(BoardPostDetailSerializer(post, context={"request": request}).data, "자료실 권한이 변경되었습니다.")
+
+
+class FreeBoardPostListCreateView(BoardPostListCreateView):
+    """자유게시판 목록 조회와 작성 API."""
+
+    def get_queryset(self):
+        return super().get_queryset().filter(board_type=BoardPost.BoardType.FREE)
+
+    def perform_create(self, serializer):
+        serializer.save(board_type=BoardPost.BoardType.FREE, is_notice=False)
+
+
+class FreeBoardPostDetailView(BoardPostDetailView):
+    """자유게시판 상세 조회, 수정, 삭제 API."""
+
+    def get_queryset(self):
+        return super().get_queryset().filter(board_type=BoardPost.BoardType.FREE)

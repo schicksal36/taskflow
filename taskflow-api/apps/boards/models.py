@@ -54,10 +54,10 @@ class BoardPost(TimeStampedModel):
 
 
 class BoardComment(TimeStampedModel):
-    """게시글 댓글 모델.
+    """자유게시판 댓글 모델.
 
-    parent를 통해 대댓글 구조를 확장할 수 있습니다. 삭제는 is_deleted=True로 처리해
-    댓글 수와 이력을 안정적으로 관리합니다.
+    댓글은 자유게시판(FREE)에서만 사용합니다. 자료실 댓글 기능은 제거했고, 기존
+    테이블은 자유게시판 댓글 저장용으로 유지합니다.
     """
 
     post = models.ForeignKey(BoardPost, on_delete=models.CASCADE, related_name="comments")
@@ -68,6 +68,14 @@ class BoardComment(TimeStampedModel):
 
     class Meta:
         ordering = ["created_at"]
+
+
+class BoardCommentFile(TimeStampedModel):
+    """자유게시판 댓글과 MediaFile을 연결하는 사진 첨부 모델."""
+
+    comment = models.ForeignKey(BoardComment, on_delete=models.CASCADE, related_name="files")
+    media_file = models.ForeignKey("media_files.MediaFile", on_delete=models.CASCADE)
+    uploaded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
 
 
 class BoardLike(TimeStampedModel):

@@ -47,7 +47,7 @@ class BoardApiTests(APITestCase):
         self.assertEqual(like_response.status_code, status.HTTP_200_OK)
         self.assertTrue(BoardLike.objects.filter(post=post, user=self.reader).exists())
 
-    def test_admin_can_delete_but_cannot_update_other_users_post(self):
+    def test_admin_can_update_and_delete_other_users_post(self):
         post = BoardPost.objects.create(
             author=self.author,
             board_type=BoardPost.BoardType.DATA_ROOM,
@@ -61,9 +61,38 @@ class BoardApiTests(APITestCase):
             {"title": "관리자가 수정"},
             format="json",
         )
-        self.assertEqual(update_response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(update_response.status_code, status.HTTP_200_OK)
 
         delete_response = self.client.delete(f"/api/boards/posts/{post.id}/")
         self.assertEqual(delete_response.status_code, status.HTTP_204_NO_CONTENT)
         post.refresh_from_db()
         self.assertTrue(post.is_deleted)
+
+    def test_data_room_comments_are_disabled(self):
+        post = BoardPost.objects.create(
+            author=self.author,
+            board_type=BoardPost.BoardType.DATA_ROOM,
+            title="자료",
+            content="자료실 댓글은 사용하지 않습니다.",
+        )
+
+        self.client.force_authenticate(self.reader)
+        response = self.client.post(
+            f"/api/boards/posts/{post.id}/comments/",
+            {"content": "댓글"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(BoardComment.objects.filter(post=post).exists())
+
+    def test_freeboard_alias_creates_free_post(self):
+        self.client.force_authenticate(self.author)
+        response = self.client.post(
+            "/api/freeboard/",
+            {"title": "자유 글", "content": "자유롭게 공유합니다."},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(BoardPost.objects.filter(title="자유 글", board_type=BoardPost.BoardType.FREE).exists())

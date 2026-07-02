@@ -14,11 +14,8 @@ import {
   login as requestLogin,
   logout as requestLogout,
   refreshAccessToken,
-  requestBiometricLoginOptions,
   register as requestRegister,
-  verifyBiometricLogin,
 } from "@/lib/api";
-import { createBiometricAssertion } from "@/lib/webauthn";
 
 type RegisterInput = {
   email: string;
@@ -35,7 +32,6 @@ type AuthContextValue = {
   user: ApiUser | null;
   isReady: boolean;
   login: (identifier: string, password: string, remember?: boolean) => Promise<ApiUser>;
-  loginWithBiometric: (identifier: string, remember?: boolean) => Promise<ApiUser>;
   register: (input: RegisterInput) => Promise<ApiUser>;
   refreshUser: () => Promise<ApiUser | null>;
   logout: () => Promise<void>;
@@ -169,13 +165,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isReady,
       async login(identifier, password, remember = true) {
         const payload = await requestLogin(identifier, password);
-        storeSession(payload.access, payload.refresh, payload.user, remember);
-        return payload.user;
-      },
-      async loginWithBiometric(identifier, remember = true) {
-        const options = await requestBiometricLoginOptions(identifier);
-        const assertion = await createBiometricAssertion(options);
-        const payload = await verifyBiometricLogin(assertion);
         storeSession(payload.access, payload.refresh, payload.user, remember);
         return payload.user;
       },

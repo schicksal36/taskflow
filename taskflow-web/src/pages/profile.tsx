@@ -4,24 +4,17 @@ import { AppShell } from "@/components/AppShell";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   type AdminApprovalRequest,
-  type BiometricCredential,
   type UserProfile,
   changePassword,
   createAdminApprovalRequest,
   deleteMe,
-  deleteBiometricCredential,
   describeApiError,
-  fetchBiometricCredentials,
   fetchMyAdminApprovalRequest,
   fetchProfile,
-  requestBiometricRegisterOptions,
-  toArray,
   updateMe,
   updateProfile,
-  verifyBiometricRegister,
+  updateProfileImage,
 } from "@/lib/api";
-import { formatDateTime } from "@/lib/format";
-import { createBiometricRegistration, isWebAuthnSupported } from "@/lib/webauthn";
 
 export default function ProfilePage() {
   const { accessToken, logout, refreshUser, user } = useAuth();
@@ -30,14 +23,13 @@ export default function ProfilePage() {
     first_name: "",
     department: "",
     position: "",
+    hire_date: "",
   });
+  const [profileImageFile, setProfileImageFile] = useState<File | null>(null);
+  const [profileImagePreview, setProfileImagePreview] = useState<string | null>(null);
   const [profileForm, setProfileForm] = useState<UserProfile>({
     bio: "",
   });
-  const [biometricItems, setBiometricItems] = useState<BiometricCredential[]>([]);
-  const [deviceName, setDeviceName] = useState("");
-  const [supportsBiometric, setSupportsBiometric] = useState(false);
-  const [isBiometricLoading, setIsBiometricLoading] = useState(true);
   const [passwordForm, setPasswordForm] = useState({
     old_password: "",
     new_password: "",
@@ -58,13 +50,16 @@ export default function ProfilePage() {
         first_name: user.first_name ?? "",
         department: user.department ?? "",
         position: user.position ?? "",
+        hire_date: user.hire_date ?? "",
       });
     }
   }, [user]);
 
-  useEffect(() => {
-    setSupportsBiometric(isWebAuthnSupported());
-  }, []);
+  useEffect(() => () => {
+    if (profileImagePreview?.startsWith("blob:")) {
+      URL.revokeObjectURL(profileImagePreview);
+    }
+  }, [profileImagePreview]);
 
   useEffect(() => {
     let isMounted = true;
@@ -93,29 +88,6 @@ export default function ProfilePage() {
     return () => {
       isMounted = false;
     };
-  }, [accessToken]);
-
-  async function loadBiometricItems() {
-    if (!accessToken) {
-      return;
-    }
-
-    setIsBiometricLoading(true);
-
-    try {
-      const response = await fetchBiometricCredentials(accessToken);
-      setBiometricItems(toArray(response));
-    } catch (error) {
-      setMessage(describeApiError(error));
-    } finally {
-      setIsBiometricLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    loadBiometricItems();
-    // loadBiometricItems는 등록/삭제 후에도 재사용하므로 accessToken만 의존합니다.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accessToken]);
 
   useEffect(() => {
@@ -157,6 +129,10 @@ export default function ProfilePage() {
 
     try {
       await updateMe(accessToken, userForm);
+      if (profileImageFile) {
+        await updateProfileImage(accessToken, profileImageFile);
+        setProfileImageFile(null);
+      }
       await updateProfile(accessToken, profileForm);
       await refreshUser();
       setMessage("마이페이지 정보가 저장되었습니다.");
@@ -204,45 +180,6 @@ export default function ProfilePage() {
     }
   }
 
-  async function handleBiometricRegister(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!accessToken || !supportsBiometric) {
-      return;
-    }
-
-    setIsSaving(true);
-    setMessage("");
-
-    try {
-      const options = await requestBiometricRegisterOptions(accessToken, { device_name: deviceName });
-      const payload = await createBiometricRegistration(options, deviceName);
-      await verifyBiometricRegister(accessToken, payload);
-      setDeviceName("");
-      await loadBiometricItems();
-      setMessage("생체인식 기기가 등록되었습니다.");
-    } catch (error) {
-      setMessage(describeApiError(error));
-    } finally {
-      setIsSaving(false);
-    }
-  }
-
-  async function handleBiometricDelete(id: number) {
-    if (!accessToken) {
-      return;
-    }
-
-    setMessage("");
-
-    try {
-      await deleteBiometricCredential(accessToken, id);
-      await loadBiometricItems();
-      setMessage("생체인식 기기가 삭제되었습니다.");
-    } catch (error) {
-      setMessage(describeApiError(error));
-    }
-  }
-
   async function handleAdminApprovalSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!accessToken) {
@@ -266,6 +203,8 @@ export default function ProfilePage() {
 
   const roleLabel = user?.role === "CEO" ? "대표이사" : user?.role === "ADMIN" ? "관리자" : "일반사용자";
   const displayName = user?.first_name || user?.username || user?.email || "";
+  const profileImageSrc = profileImagePreview ?? user?.profile_image ?? "";
+  const hireDateDisplay = formatHireDate(userForm.hire_date || user?.hire_date);
   const approvalStatusLabel =
     approval?.status === "PENDING"
       ? "검토중"
@@ -305,6 +244,34 @@ export default function ProfilePage() {
             <span>{roleLabel}</span>
           </div>
 
+          <div className="profile-photo-field">
+            <div className="profile-photo-preview">
+              {profileImageSrc ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img alt="프로필 사진" src={profileImageSrc} />
+              ) : (
+                <span>{displayName.slice(0, 1) || "T"}</span>
+              )}
+            </div>
+            <label>
+              <span>프로필 사진(선택)</span>
+              <input
+                accept="image/jpeg,image/png,image/webp,image/gif"
+                onChange={(event) => {
+                  const file = event.target.files?.[0] ?? null;
+                  setProfileImageFile(file);
+                  setProfileImagePreview((current) => {
+                    if (current?.startsWith("blob:")) {
+                      URL.revokeObjectURL(current);
+                    }
+                    return file ? URL.createObjectURL(file) : null;
+                  });
+                }}
+                type="file"
+              />
+            </label>
+          </div>
+
           <label>
             <span>이메일</span>
             <input
@@ -337,6 +304,21 @@ export default function ProfilePage() {
                 onChange={(event) => setUserForm((current) => ({ ...current, position: event.target.value }))}
                 value={userForm.position}
               />
+            </label>
+          </div>
+
+          <div className="form-grid two">
+            <label>
+              <span>입사일</span>
+              <input
+                onChange={(event) => setUserForm((current) => ({ ...current, hire_date: event.target.value }))}
+                type="date"
+                value={userForm.hire_date ?? ""}
+              />
+            </label>
+            <label>
+              <span>근속일</span>
+              <input readOnly value={hireDateDisplay} />
             </label>
           </div>
 
@@ -396,68 +378,6 @@ export default function ProfilePage() {
             비밀번호 변경
           </button>
         </form>
-      </section>
-
-      <section className="editor-layout">
-        <form className="panel form-stack" onSubmit={handleBiometricRegister}>
-          <div className="panel-head">
-            <h2>생체인식 설정</h2>
-            <span>{biometricItems.length ? "사용중" : "미등록"}</span>
-          </div>
-
-          {!supportsBiometric && <p className="notice">현재 브라우저는 WebAuthn 생체인식을 지원하지 않습니다.</p>}
-
-          <label>
-            <span>기기 이름</span>
-            <input
-              onChange={(event) => setDeviceName(event.target.value)}
-              placeholder="예: 사무실 Mac Touch ID"
-              value={deviceName}
-            />
-          </label>
-
-          <button className="primary-button" disabled={isSaving || !supportsBiometric} type="submit">
-            {isSaving ? "등록 중" : "생체인식 등록"}
-          </button>
-        </form>
-
-        <section className="panel">
-          <div className="panel-head">
-            <h2>등록된 기기</h2>
-            <span>{isBiometricLoading ? "조회 중" : `${biometricItems.length}건`}</span>
-          </div>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>기기</th>
-                  <th>등록일</th>
-                  <th>최근 사용</th>
-                  <th>관리</th>
-                </tr>
-              </thead>
-              <tbody>
-                {biometricItems.map((item) => (
-                  <tr key={item.id}>
-                    <td>{item.device_name || "이름 없는 기기"}</td>
-                    <td>{formatDateTime(item.created_at)}</td>
-                    <td>{formatDateTime(item.last_used_at)}</td>
-                    <td className="table-actions">
-                      <button className="danger-button" onClick={() => handleBiometricDelete(item.id)} type="button">
-                        삭제
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-                {!biometricItems.length && (
-                  <tr>
-                    <td colSpan={4}>등록된 생체인식 기기가 없습니다.</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </section>
       </section>
 
       <section className="panel form-stack danger-zone">
@@ -531,4 +451,22 @@ export default function ProfilePage() {
       )}
     </AppShell>
   );
+}
+
+function formatHireDate(value?: string | null) {
+  if (!value) {
+    return "-";
+  }
+
+  const hireDate = new Date(`${value.slice(0, 10)}T00:00:00`);
+  if (Number.isNaN(hireDate.getTime())) {
+    return value;
+  }
+
+  const today = new Date();
+  const todayDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const hireOnlyDate = new Date(hireDate.getFullYear(), hireDate.getMonth(), hireDate.getDate());
+  const diffDays = Math.floor((todayDate.getTime() - hireOnlyDate.getTime()) / 86_400_000);
+  const dDay = diffDays >= 0 ? `D+${diffDays}` : `D${diffDays}`;
+  return `${value.slice(0, 10)} (${dDay}일차)`;
 }

@@ -202,7 +202,7 @@ SPECTACULAR_SETTINGS = {
     "DESCRIPTION": "TaskFlow 업무관리 플랫폼 API 문서",
     "VERSION": "1.0.0",
     "TAGS": [
-        {"name": "🔐 인증", "description": "회원가입, 로그인, 토큰 갱신, 생체인식"},
+        {"name": "🔐 인증", "description": "회원가입, 로그인, 토큰 갱신"},
         {"name": "👤 프로필", "description": "내 프로필 조회/수정, 비밀번호 변경, 회원탈퇴"},
         {"name": "🏅 관리자 승격", "description": "관리자 승격 신청서 제출/조회/승인/거절"},
         {"name": "👥 사용자 관리", "description": "전체 사용자 조회, 역할 변경 (CEO/ADMIN 전용)"},

@@ -2,7 +2,9 @@
 
 from rest_framework import serializers
 
-from .models import BoardComment, BoardFile, BoardLike, BoardPost
+from apps.media_files.models import MediaFile
+
+from .models import BoardComment, BoardCommentFile, BoardFile, BoardLike, BoardPost
 
 
 class BoardPostListSerializer(serializers.ModelSerializer):
@@ -17,6 +19,7 @@ class BoardPostListSerializer(serializers.ModelSerializer):
     author_position = serializers.CharField(source="author.position", read_only=True)
     file_count = serializers.IntegerField(source="files.count", read_only=True)
     is_locked = serializers.SerializerMethodField()
+    comment_count = serializers.SerializerMethodField()
 
     class Meta:
         model = BoardPost
@@ -44,6 +47,11 @@ class BoardPostListSerializer(serializers.ModelSerializer):
 
     def get_author_name(self, obj):
         return obj.author.first_name or obj.author.email or obj.author.username
+
+    def get_comment_count(self, obj):
+        if obj.board_type == BoardPost.BoardType.DATA_ROOM:
+            return 0
+        return obj.comment_count
 
     def get_is_locked(self, obj):
         request = self.context.get("request")
@@ -114,12 +122,13 @@ class BoardPostPinSerializer(serializers.ModelSerializer):
 
 
 class BoardCommentSerializer(serializers.ModelSerializer):
-    """게시글 댓글 serializer."""
+    """자유게시판 댓글 serializer."""
 
     author_name = serializers.SerializerMethodField()
     author_email = serializers.EmailField(source="author.email", read_only=True)
     author_department = serializers.CharField(source="author.department", read_only=True)
     author_position = serializers.CharField(source="author.position", read_only=True)
+    files = serializers.SerializerMethodField()
 
     class Meta:
         model = BoardComment
@@ -133,6 +142,7 @@ class BoardCommentSerializer(serializers.ModelSerializer):
             "author_position",
             "parent",
             "content",
+            "files",
             "is_deleted",
             "created_at",
             "updated_at",
@@ -141,6 +151,43 @@ class BoardCommentSerializer(serializers.ModelSerializer):
 
     def get_author_name(self, obj):
         return obj.author.first_name or obj.author.email or obj.author.username
+
+    def get_files(self, obj):
+        return BoardCommentFileSerializer(obj.files.all(), many=True, context=self.context).data
+
+
+class BoardCommentFileSerializer(serializers.ModelSerializer):
+    """자유게시판 댓글 사진 첨부 serializer."""
+
+    original_name = serializers.CharField(source="media_file.original_name", read_only=True)
+    file_url = serializers.SerializerMethodField()
+    file_type = serializers.CharField(source="media_file.file_type", read_only=True)
+    mime_type = serializers.CharField(source="media_file.mime_type", read_only=True)
+    download_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = BoardCommentFile
+        fields = ["id", "comment", "media_file", "original_name", "file_url", "file_type", "mime_type", "download_url", "uploaded_by", "created_at"]
+        read_only_fields = ["comment", "uploaded_by", "created_at"]
+
+    def validate_media_file(self, media_file):
+        if media_file.file_type != MediaFile.FileType.IMAGE:
+            raise serializers.ValidationError("댓글에는 이미지 파일만 첨부할 수 있습니다.")
+        if media_file.size > 5 * 1024 * 1024:
+            raise serializers.ValidationError("댓글 이미지는 최대 5MB까지 첨부할 수 있습니다.")
+        return media_file
+
+    def get_file_url(self, obj):
+        request = self.context.get("request")
+        if not obj.media_file.file:
+            return None
+        url = obj.media_file.file.url
+        return request.build_absolute_uri(url) if request else url
+
+    def get_download_url(self, obj):
+        request = self.context.get("request")
+        url = f"/api/boards/comment-files/{obj.id}/download/"
+        return request.build_absolute_uri(url) if request else url
 
 
 class BoardLikeSerializer(serializers.ModelSerializer):

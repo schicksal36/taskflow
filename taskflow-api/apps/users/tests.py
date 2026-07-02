@@ -165,6 +165,22 @@ class UserApiTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["data"]["bio"], "JSON으로 수정한 소개입니다.")
 
+    def test_my_info_patch_accepts_hire_date(self):
+        User = get_user_model()
+        user = User.objects.create_user(
+            username="hire-date@example.com",
+            email="hire-date@example.com",
+            password="StrongPass123!",
+        )
+
+        self.client.force_authenticate(user)
+        response = self.client.patch("/api/users/me/", {"hire_date": "2026-07-01"}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        user.refresh_from_db()
+        self.assertEqual(str(user.hire_date), "2026-07-01")
+        self.assertEqual(response.data["data"]["hire_date"], "2026-07-01")
+
     def test_ceo_role_save_sets_position_and_staff(self):
         User = get_user_model()
         ceo = User.objects.create_user(

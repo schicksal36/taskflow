@@ -221,6 +221,7 @@ export type ApiUser = {
   department?: string;
   position?: string;
   profile_image?: string | null;
+  hire_date?: string | null;
   role?: string;
   is_email_verified?: boolean;
   is_active?: boolean;
@@ -577,9 +578,23 @@ export type BoardComment = {
   author_position?: string;
   parent?: number | null;
   content: string;
+  files?: BoardCommentFile[];
   is_deleted?: boolean;
   created_at?: string;
   updated_at?: string;
+};
+
+export type BoardCommentFile = {
+  id: number;
+  comment: number;
+  media_file: number;
+  original_name?: string;
+  file_url?: string | null;
+  file_type?: string;
+  mime_type?: string;
+  download_url?: string;
+  uploaded_by?: number;
+  created_at?: string;
 };
 
 export type BoardFile = {
@@ -615,53 +630,6 @@ export type MediaFile = {
   size?: number;
   mime_type?: string;
   created_at?: string;
-};
-
-export type BiometricCredential = {
-  id: number;
-  credential_id: string;
-  device_name?: string;
-  transports?: string[];
-  sign_count?: number;
-  last_used_at?: string | null;
-  created_at?: string;
-};
-
-export type BiometricRegisterOptions = {
-  challenge: string;
-  rp: { name: string; id: string };
-  user: { id: string; name: string; displayName: string };
-  pubKeyCredParams: PublicKeyCredentialParameters[];
-  timeout: number;
-  attestation: AttestationConveyancePreference;
-  authenticatorSelection: AuthenticatorSelectionCriteria;
-  device_name?: string;
-};
-
-export type BiometricLoginOptions = {
-  challenge: string;
-  timeout: number;
-  userVerification: UserVerificationRequirement;
-  allowCredentials: Array<{
-    type: PublicKeyCredentialType;
-    id: string;
-    transports?: AuthenticatorTransport[];
-  }>;
-};
-
-export type BiometricRegisterVerifyInput = {
-  challenge: string;
-  credential_id: string;
-  public_key: string;
-  sign_count?: number;
-  device_name?: string;
-  transports?: string[];
-};
-
-export type BiometricLoginVerifyInput = {
-  challenge: string;
-  credential_id: string;
-  sign_count?: number;
 };
 
 export function login(email: string, password: string) {
@@ -701,13 +669,19 @@ export function fetchMe(token: string) {
 
 export function updateMe(
   token: string,
-  input: Pick<ApiUser, "email" | "first_name" | "department" | "position">,
+  input: Pick<ApiUser, "email" | "first_name" | "department" | "position" | "hire_date">,
 ) {
   return apiFetch<ApiUser>("/profile/", {
     method: "PATCH",
     token,
     body: input,
   });
+}
+
+export function updateProfileImage(token: string, file: File) {
+  const formData = new FormData();
+  formData.append("profile_image", file);
+  return apiUpload<ApiUser>("/users/me/profile/image/", formData, { method: "PATCH", token });
 }
 
 export function deleteMe(token: string) {
@@ -798,43 +772,6 @@ export function changePassword(token: string, input: { old_password?: string; cu
     method: "PATCH",
     token,
     body: input,
-  });
-}
-
-export function requestBiometricRegisterOptions(token: string, input: { device_name?: string } = {}) {
-  return apiFetch<BiometricRegisterOptions>("/users/biometric/register/options/", {
-    token,
-    body: input,
-  });
-}
-
-export function verifyBiometricRegister(token: string, input: BiometricRegisterVerifyInput) {
-  return apiFetch<BiometricCredential>("/users/biometric/register/verify/", {
-    token,
-    body: input,
-  });
-}
-
-export function requestBiometricLoginOptions(identifier: string) {
-  return apiFetch<BiometricLoginOptions>("/users/biometric/login/options/", {
-    body: { identifier },
-  });
-}
-
-export function verifyBiometricLogin(input: BiometricLoginVerifyInput) {
-  return apiFetch<AuthPayload>("/users/biometric/login/verify/", {
-    body: input,
-  });
-}
-
-export function fetchBiometricCredentials(token: string) {
-  return apiFetch<ListShape<BiometricCredential>>("/users/biometric/credentials/", { token });
-}
-
-export function deleteBiometricCredential(token: string, id: number) {
-  return apiFetch<unknown>(`/users/biometric/credentials/${id}/`, {
-    method: "DELETE",
-    token,
   });
 }
 
@@ -1394,6 +1331,32 @@ export function createBoardComment(token: string, postId: number, content: strin
     token,
     body: { content },
   });
+}
+
+export function updateBoardComment(token: string, commentId: number, content: string) {
+  return apiFetch<BoardComment>(`/boards/comments/${commentId}/`, {
+    method: "PATCH",
+    token,
+    body: { content },
+  });
+}
+
+export function deleteBoardComment(token: string, commentId: number) {
+  return apiFetch<unknown>(`/boards/comments/${commentId}/`, {
+    method: "DELETE",
+    token,
+  });
+}
+
+export function attachBoardCommentFile(token: string, commentId: number, mediaFileId: number) {
+  return apiFetch<BoardCommentFile>(`/boards/comments/${commentId}/files/`, {
+    token,
+    body: { media_file: mediaFileId },
+  });
+}
+
+export function downloadBoardCommentFile(token: string, fileId: number, filename?: string) {
+  return apiDownload(`/boards/comment-files/${fileId}/download/`, token, filename || "comment-image");
 }
 
 export function updateBoardPermission(token: string, postId: number, permission: string, specificUserIds: number[]) {

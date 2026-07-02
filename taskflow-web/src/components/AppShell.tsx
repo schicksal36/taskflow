@@ -22,6 +22,7 @@ const navigation = [
   { href: "/reports", label: "보고관리" },
   { href: "/schedules", label: "일정관리" },
   { href: "/data-room", label: "자료실" },
+  ...(process.env.NODE_ENV === "development" ? [{ href: "/free-board", label: "자유게시판" }] : []),
 ];
 
 const quickLinks = [

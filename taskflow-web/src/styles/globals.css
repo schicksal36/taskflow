@@ -564,35 +564,186 @@ td {
   justify-self: start;
 }
 
-.attachment-preview-modal {
-  width: min(920px, 100%);
-  max-height: min(780px, calc(100vh - 48px));
-  overflow: auto;
+.attachment-preview-shell {
+  position: fixed;
+  z-index: 140;
+  inset: 0;
+  display: grid;
+  place-items: stretch;
+  background: rgba(0, 0, 0, 0.88);
+}
+
+.attachment-preview-window {
+  position: relative;
+  display: grid;
+  grid-template-rows: 38px minmax(0, 1fr) 48px;
+  min-width: 0;
+  min-height: 0;
+  color: #f5f5f5;
+  background: #141414;
+}
+
+.attachment-preview-titlebar {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr) 52px;
+  align-items: center;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: #202020;
+}
+
+.attachment-preview-titlebar strong {
+  overflow: hidden;
+  color: #f0f0f0;
+  font-size: 13px;
+  font-weight: 900;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-preview-window-controls {
+  display: flex;
+  gap: 8px;
+  padding-left: 16px;
+}
+
+.attachment-preview-window-controls span {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+
+.attachment-preview-window-controls span:nth-child(1) {
+  background: #ff5f57;
+}
+
+.attachment-preview-window-controls span:nth-child(2) {
+  background: #ffbd2e;
+}
+
+.attachment-preview-window-controls span:nth-child(3) {
+  background: #28c840;
+}
+
+.attachment-preview-stage {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: #171717;
 }
 
 .attachment-preview-media {
   display: block;
-  max-width: 100%;
-  max-height: calc(100vh - 170px);
-  margin: 16px auto 0;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #0f172a;
+  max-width: min(100vw, 1180px);
+  max-height: calc(100vh - 86px);
+  background: #111;
   object-fit: contain;
 }
 
-.attachment-preview-controls {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  margin-top: 14px;
+.attachment-preview-nav {
+  position: absolute;
+  top: 50%;
+  z-index: 1;
+  width: 42px;
+  height: 42px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.16);
+  color: #f5f5f5;
+  font-size: 36px;
+  line-height: 1;
+  transform: translateY(-50%);
 }
 
-.attachment-preview-controls span {
-  color: var(--muted);
-  font-size: 13px;
+.attachment-preview-nav:hover,
+.attachment-preview-nav:focus-visible,
+.attachment-preview-icon-button:hover,
+.attachment-preview-icon-button:focus-visible {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.attachment-preview-nav-prev {
+  left: 16px;
+}
+
+.attachment-preview-nav-next {
+  right: 16px;
+}
+
+.attachment-preview-toolbar {
+  display: grid;
+  grid-template-columns: minmax(80px, 1fr) auto minmax(80px, 1fr);
+  align-items: center;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  background: #202020;
+  padding: 0 14px;
+}
+
+.attachment-preview-count {
+  grid-column: 2;
+  color: rgba(255, 255, 255, 0.62);
+  font-size: 12px;
   font-weight: 900;
+  text-align: center;
+}
+
+.attachment-preview-tools {
+  grid-column: 3;
+  justify-self: end;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.attachment-preview-icon-button {
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #f5f5f5;
+  font-size: 22px;
+  font-weight: 800;
+}
+
+.attachment-preview-menu-wrap {
+  position: relative;
+}
+
+.attachment-preview-action-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 10px);
+  display: grid;
+  min-width: 148px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 10px;
+  background: rgba(38, 38, 38, 0.94);
+  box-shadow: 0 18px 36px rgba(0, 0, 0, 0.36);
+  backdrop-filter: blur(12px);
+}
+
+.attachment-preview-action-menu button {
+  justify-content: flex-start;
+  min-height: 34px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #f7f7f7;
+  font-size: 13px;
+  font-weight: 800;
+  text-align: left;
+}
+
+.attachment-preview-action-menu button:hover,
+.attachment-preview-action-menu button:focus-visible {
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .comment-list {

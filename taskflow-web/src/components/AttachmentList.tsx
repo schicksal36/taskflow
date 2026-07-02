@@ -39,6 +39,8 @@ function previewKindOf(file: AttachmentItem) {
 export function AttachmentList<T extends AttachmentItem>({ files, onDownload, onDownloadAll }: AttachmentListProps<T>) {
   const previewableFiles = useMemo(() => files?.filter((file) => file.file_url && previewKindOf(file)) ?? [], [files]);
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
+  const [isActionMenuOpen, setIsActionMenuOpen] = useState(false);
+  const [isLinkCopied, setIsLinkCopied] = useState(false);
   const previewFile = previewIndex === null ? null : previewableFiles[previewIndex] ?? null;
   const previewKind = previewFile ? previewKindOf(previewFile) : null;
   const canMovePreview = previewableFiles.length > 1;
@@ -56,6 +58,20 @@ export function AttachmentList<T extends AttachmentItem>({ files, onDownload, on
       return (currentIndex + direction + previewableFiles.length) % previewableFiles.length;
     });
   }, [previewableFiles.length]);
+
+  async function copyPreviewLink() {
+    if (!previewFile?.file_url) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(previewFile.file_url);
+      setIsLinkCopied(true);
+      window.setTimeout(() => setIsLinkCopied(false), 1600);
+    } catch {
+      setIsLinkCopied(false);
+    }
+  }
 
   function openPreview(file: T) {
     const index = previewableFiles.findIndex((entry) => entry.id === file.id);
@@ -84,6 +100,23 @@ export function AttachmentList<T extends AttachmentItem>({ files, onDownload, on
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [closePreview, movePreview, previewFile]);
+
+  useEffect(() => {
+    setIsActionMenuOpen(false);
+    setIsLinkCopied(false);
+  }, [previewIndex]);
+
+  useEffect(() => {
+    if (!previewFile) {
+      return undefined;
+    }
+
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = originalOverflow;
+    };
+  }, [previewFile]);
 
   if (!files?.length) {
     return <p className="report-detail-empty">첨부파일이 없습니다.</p>;
@@ -115,38 +148,67 @@ export function AttachmentList<T extends AttachmentItem>({ files, onDownload, on
       </div>
 
       {previewFile?.file_url && previewKind && (
-        <div className="modal-backdrop nested-modal-backdrop">
-          <div className="modal-panel attachment-preview-modal">
-            <div className="panel-head">
-              <h2>{fileNameOf(previewFile)}</h2>
-              <div className="table-actions">
-                <button className="ghost-button" onClick={() => onDownload(previewFile)} type="button">
-                  다운로드
+        <div className="attachment-preview-shell" role="dialog" aria-modal="true" aria-label={fileNameOf(previewFile)}>
+          <div className="attachment-preview-window">
+            <div className="attachment-preview-titlebar">
+              <div className="attachment-preview-window-controls" aria-hidden="true">
+                <span />
+                <span />
+                <span />
+              </div>
+              <strong>{fileNameOf(previewFile)}</strong>
+              <button className="attachment-preview-icon-button" onClick={closePreview} type="button" aria-label="닫기" title="닫기">
+                ×
+              </button>
+            </div>
+
+            <div className="attachment-preview-stage" onClick={() => setIsActionMenuOpen(false)}>
+              {canMovePreview && (
+                <button className="attachment-preview-nav attachment-preview-nav-prev" onClick={(event) => {
+                  event.stopPropagation();
+                  movePreview(-1);
+                }} type="button" aria-label="이전 파일" title="이전 파일">
+                  ‹
                 </button>
-                <button className="ghost-button" onClick={closePreview} type="button">
-                  닫기
+              )}
+              {previewKind === "image" ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img alt={fileNameOf(previewFile)} className="attachment-preview-media" src={previewFile.file_url} />
+              ) : (
+                <video className="attachment-preview-media" controls src={previewFile.file_url}>
+                  미리보기를 지원하지 않는 브라우저입니다.
+                </video>
+              )}
+              {canMovePreview && (
+                <button className="attachment-preview-nav attachment-preview-nav-next" onClick={(event) => {
+                  event.stopPropagation();
+                  movePreview(1);
+                }} type="button" aria-label="다음 파일" title="다음 파일">
+                  ›
                 </button>
+              )}
+            </div>
+
+            <div className="attachment-preview-toolbar">
+              <div className="attachment-preview-count">{(previewIndex ?? 0) + 1} / {previewableFiles.length}</div>
+              <div className="attachment-preview-tools">
+                <button className="attachment-preview-icon-button" onClick={() => onDownload(previewFile)} type="button" aria-label="다운로드" title="다운로드">
+                  ⇩
+                </button>
+                <div className="attachment-preview-menu-wrap">
+                  <button className="attachment-preview-icon-button" onClick={() => setIsActionMenuOpen((current) => !current)} type="button" aria-label="더보기" title="더보기" aria-expanded={isActionMenuOpen}>
+                    …
+                  </button>
+                  {isActionMenuOpen && (
+                    <div className="attachment-preview-action-menu">
+                      <button onClick={() => onDownload(previewFile)} type="button">다운로드</button>
+                      <button onClick={copyPreviewLink} type="button">{isLinkCopied ? "복사됨" : "링크 복사"}</button>
+                      <button onClick={closePreview} type="button">닫기</button>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
-            {canMovePreview && (
-              <div className="attachment-preview-controls">
-                <button className="ghost-button" onClick={() => movePreview(-1)} type="button">
-                  이전
-                </button>
-                <span>{(previewIndex ?? 0) + 1} / {previewableFiles.length}</span>
-                <button className="ghost-button" onClick={() => movePreview(1)} type="button">
-                  다음
-                </button>
-              </div>
-            )}
-            {previewKind === "image" ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img alt={fileNameOf(previewFile)} className="attachment-preview-media" src={previewFile.file_url} />
-            ) : (
-              <video className="attachment-preview-media" controls src={previewFile.file_url}>
-                미리보기를 지원하지 않는 브라우저입니다.
-              </video>
-            )}
           </div>
         </div>
       )}

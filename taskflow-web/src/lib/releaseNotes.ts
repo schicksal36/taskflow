@@ -26,6 +26,17 @@ export function groupReleaseNotesByDate(notes: ReleaseNote[]) {
 export const releaseNotes: ReleaseNote[] = [
   {
     date: "26/7/2",
+    title: "첨부파일 전체화면 미리보기 UI 개선",
+    summary: "이미지와 동영상 첨부 미리보기를 카카오톡 스타일의 전체화면 뷰어로 개선",
+    details: [
+      "첨부파일 미리보기를 어두운 전체화면 뷰어로 표시",
+      "상단 제목 바와 하단 다운로드/더보기 툴바 추가",
+      "여러 미리보기 파일을 좌우 화면 버튼과 방향키로 이동하도록 정리",
+      "더보기 메뉴에서 다운로드, 링크 복사, 닫기 동작 제공",
+    ],
+  },
+  {
+    date: "26/7/2",
     title: "마이페이지 프로필 사진과 입사일 추가",
     summary: "마이페이지에서 프로필 사진을 선택 업로드하고 입사일과 근속일을 관리하도록 개선",
     details: [
